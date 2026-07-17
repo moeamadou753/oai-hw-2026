@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#080b16" />
+    <title>Tonal Field</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="topbar">
+        <a class="wordmark" href="#top" aria-label="Tonal Field home">tonal field<span>·</span></a>
+        <div class="status" aria-live="polite"><i id="status-dot"></i><span id="status-text">DRONE STANDBY</span></div>
+        <button id="about-trigger" class="ghost-button" type="button">about</button>
+      </header>
+
+      <section class="experience" id="top" aria-label="Tonal practice space">
+        <div class="ambient ambient-one"></div>
+        <div class="ambient ambient-two"></div>
+        <div class="practice-copy">
+          <p class="eyebrow">A living tonal practice instrument</p>
+          <h1>Find the pull.<br />Feel the return.</h1>
+          <p class="intro">Hold a tonal center, answer it with your voice or instrument, and watch your relationship to home take shape.</p>
+        </div>
+
+        <div class="field-wrap">
+          <canvas id="field" width="1000" height="1000" aria-label="Live tonal field visualization"></canvas>
+          <div class="target-label" id="target-label">TONIC · C</div>
+          <button id="orb-button" class="orb-button" type="button" aria-pressed="false" aria-label="Start the drone">
+            <span class="orb-core"></span>
+            <span class="orb-ring ring-one"></span>
+            <span class="orb-ring ring-two"></span>
+            <span class="orb-copy" id="orb-copy">hold<br />home</span>
+          </button>
+          <p class="pitch-readout" id="pitch-readout">—</p>
+          <p class="pitch-detail" id="pitch-detail">waiting for a note</p>
+        </div>
+
+        <aside class="descriptor-stream" aria-label="Interval descriptors">
+          <p class="stream-label">what this might feel like</p>
+          <div id="descriptors" class="descriptor-list"></div>
+        </aside>
+
+        <div class="lesson-card" id="lesson-card">
+          <p class="lesson-kicker">Today’s invitation</p>
+          <p id="lesson-text">Start the drone. Find its center before you reach for anything else.</p>
+          <div class="lesson-meter"><span id="lesson-meter-fill"></span></div>
+        </div>
+      </section>
+
+      <section class="controls" aria-label="Practice controls">
+        <div class="control-group key-control">
+          <label for="key-select">tonal center</label>
+          <select id="key-select" aria-label="Tonal center"></select>
+        </div>
+        <div class="control-group">
+          <label for="octave-select">register</label>
+          <select id="octave-select" aria-label="Drone register">
+            <option value="2">low</option>
+            <option value="3" selected>middle</option>
+            <option value="4">high</option>
+          </select>
+        </div>
+        <div class="control-group wide-control">
+          <label for="warmth">drone character <output id="warmth-output">warm</output></label>
+          <input id="warmth" type="range" min="0" max="100" value="54" />
+        </div>
+        <div class="control-group wide-control">
+          <label for="volume">drone level <output id="volume-output">48%</output></label>
+          <input id="volume" type="range" min="0" max="100" value="48" />
+        </div>
+        <button id="mic-button" class="mic-button" type="button">enable listening</button>
+      </section>
+
+      <section class="practice-note">
+        <p><strong>Headphones recommended.</strong> The field listens for one clear voice or instrument at a time. It will ignore uncertain input rather than pretend to know.</p>
+      </section>
+    </main>
+
+    <dialog id="about-dialog">
+      <button id="about-close" class="dialog-close" type="button" aria-label="Close">×</button>
+      <p class="eyebrow">Why this exists</p>
+      <h2>More than correct.</h2>
+      <p>Tonal Field makes the pull, tension, and return inside music visible. It is a practice instrument for developing an ear that recognizes relationships in context.</p>
+      <p class="dialog-note">This V1 uses your microphone locally in the browser. No audio is recorded or uploaded.</p>
+    </dialog>
+
+    <script src="app.js"></script>
+  </body>
+</html>

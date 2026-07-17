@@ -1,5 +1,26 @@
 # oai-hw-2026
 
+## Tonal Field — V1
+
+Tonal Field is a browser-based practice instrument for ear training in context. It sustains a living tonal drone, listens for one sung or played note at a time, and visualizes the relationship between that note and the tonal center. Learners can save the descriptors that feel true to them, building a personal vocabulary for musical tension and resolution.
+
+### Run locally
+
+This V1 has no build step or external dependencies. Serve the repository from a local web server, then open the displayed URL in a modern browser:
+
+```bash
+python3 -m http.server 4173
+```
+
+Open [http://localhost:4173](http://localhost:4173). Click **hold home** to start the drone, then choose **enable listening** to grant microphone access. Headphones are recommended so the microphone does not hear the drone itself.
+
+### V1 capabilities
+
+- Additive, gently modulated drone synthesis with adjustable tonal center, register, character, and level.
+- Local, real-time monophonic microphone pitch tracking.
+- A tonal-field visual that distinguishes stable intervals from tension.
+- A personal, persistent descriptor stream: select words that match how an interval lands for you.
+
 ## Evaluation Criteria
 
 ### Technological Implementation

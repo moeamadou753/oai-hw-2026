@@ -12,7 +12,10 @@
       <header class="topbar">
         <a class="wordmark" href="#top" aria-label="Tonal Field home">tonal field<span>·</span></a>
         <div class="status" aria-live="polite"><i id="status-dot"></i><span id="status-text">DRONE STANDBY</span></div>
-        <button id="about-trigger" class="ghost-button" type="button">about</button>
+        <div class="topbar-actions">
+          <button id="controls-trigger" class="ghost-button" type="button" aria-expanded="false" aria-controls="controls">tune field</button>
+          <button id="about-trigger" class="ghost-button" type="button">about</button>
+        </div>
       </header>
 
       <section class="experience" id="top" aria-label="Tonal practice space">
@@ -47,35 +50,39 @@
           <p id="lesson-text">Start the drone. Find its center before you reach for anything else.</p>
           <div class="lesson-meter"><span id="lesson-meter-fill"></span></div>
         </div>
-      </section>
 
-      <section class="controls" aria-label="Practice controls">
-        <div class="control-group key-control">
-          <label for="key-select">tonal center</label>
-          <select id="key-select" aria-label="Tonal center"></select>
-        </div>
-        <div class="control-group">
-          <label for="octave-select">register</label>
-          <select id="octave-select" aria-label="Drone register">
-            <option value="2">low</option>
-            <option value="3" selected>middle</option>
-            <option value="4">high</option>
-          </select>
-        </div>
-        <div class="control-group wide-control">
-          <label for="warmth">drone character <output id="warmth-output">warm</output></label>
-          <input id="warmth" type="range" min="0" max="100" value="54" />
-        </div>
-        <div class="control-group wide-control">
-          <label for="volume">drone level <output id="volume-output">48%</output></label>
-          <input id="volume" type="range" min="0" max="100" value="48" />
-        </div>
-        <button id="mic-button" class="mic-button" type="button">enable listening</button>
+        <section class="controls is-collapsed" id="controls" aria-label="Practice controls">
+          <div class="control-group key-control">
+            <label for="key-select">tonal center</label>
+            <select id="key-select" aria-label="Tonal center"></select>
+          </div>
+          <div class="control-group">
+            <label for="octave-select">register</label>
+            <select id="octave-select" aria-label="Drone register">
+              <option value="2">low</option>
+              <option value="3" selected>middle</option>
+              <option value="4">high</option>
+            </select>
+          </div>
+          <div class="control-group">
+            <label for="input-profile">listen for</label>
+            <select id="input-profile" aria-label="Listening profile">
+              <option value="voice" selected>voice</option>
+              <option value="instrument">instrument</option>
+            </select>
+          </div>
+          <div class="control-group wide-control">
+            <label for="warmth">drone character <output id="warmth-output">warm</output></label>
+            <input id="warmth" type="range" min="0" max="100" value="54" />
+          </div>
+          <div class="control-group wide-control">
+            <label for="volume">drone level <output id="volume-output">48%</output></label>
+            <input id="volume" type="range" min="0" max="100" value="48" />
+          </div>
+          <button id="mic-button" class="mic-button" type="button">enable listening</button>
+        </section>
       </section>
-
-      <section class="practice-note">
-        <p><strong>Headphones recommended.</strong> The field listens for one clear voice or instrument at a time. It will ignore uncertain input rather than pretend to know.</p>
-      </section>
+      <section class="practice-note"><p><strong>Headphones recommended.</strong> The field listens for one clear voice or instrument at a time.</p></section>
     </main>
 
     <dialog id="about-dialog">

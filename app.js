@@ -22,7 +22,8 @@ const el = {
   mic: document.getElementById('mic-button'), pitch: document.getElementById('pitch-readout'), pitchDetail: document.getElementById('pitch-detail'),
   descriptors: document.getElementById('descriptors'), target: document.getElementById('target-label'), status: document.querySelector('.status'),
   statusText: document.getElementById('status-text'), lessonText: document.getElementById('lesson-text'), lessonMeter: document.getElementById('lesson-meter-fill'),
-  about: document.getElementById('about-dialog'), aboutTrigger: document.getElementById('about-trigger'), aboutClose: document.getElementById('about-close')
+  about: document.getElementById('about-dialog'), aboutTrigger: document.getElementById('about-trigger'), aboutClose: document.getElementById('about-close'),
+  controls: document.getElementById('controls'), controlsTrigger: document.getElementById('controls-trigger')
 };
 
 noteNames.forEach((name, index) => {
@@ -30,7 +31,7 @@ noteNames.forEach((name, index) => {
   el.key.add(option);
 });
 
-const state = { audio: null, droneGain: null, droneNodes: [], lfoNodes: [], isDrone: false, analyser: null, micStream: null, isListening: false, key: 0, octave: 3, warmth: 54, volume: 48, detected: null, targetHistory: [], selectedDescriptors: new Set(JSON.parse(localStorage.getItem('tonal-field-descriptors') || '[]')) };
+const state = { audio: null, droneGain: null, droneNodes: [], lfoNodes: [], isDrone: false, analyser: null, micStream: null, isListening: false, key: 0, octave: 3, warmth: 54, volume: 48, inputProfile: 'voice', detected: null, targetHistory: [], selectedDescriptors: new Set(JSON.parse(localStorage.getItem('tonal-field-descriptors') || '[]')) };
 const ctx = el.canvas.getContext('2d');
 let lastDescriptorInterval = null;
 
@@ -59,21 +60,26 @@ function buildDrone() {
   stopDroneNodes();
   const now = state.audio.currentTime;
   const fundamental = noteFrequency(selectedMidi());
-  const harmonicMix = [1, .42, .18, .085, .035];
+  const harmonicMix = [1, .09, .035, .012];
   const warmth = state.warmth / 100;
   harmonicMix.forEach((level, index) => {
     const oscillator = state.audio.createOscillator();
     const partialGain = state.audio.createGain();
     const lfo = state.audio.createOscillator();
     const lfoGain = state.audio.createGain();
-    const harmonicAmount = index === 0 ? 1 : Math.pow(warmth, index * .5);
-    oscillator.type = index < 2 ? 'sine' : 'triangle';
+    const filter = state.audio.createBiquadFilter();
+    const harmonicAmount = index === 0 ? 1 : Math.pow(warmth, index * .78);
+    oscillator.type = 'sine';
     oscillator.frequency.value = fundamental * (index + 1);
-    partialGain.gain.value = level * harmonicAmount / (index === 0 ? 1 : 1.8);
-    lfo.frequency.value = .027 + index * .013;
-    lfoGain.gain.value = Math.max(.001, partialGain.gain.value * (.08 + warmth * .13));
+    oscillator.detune.value = index === 0 ? 0 : (index % 2 ? 1.8 : -1.4);
+    partialGain.gain.value = level * harmonicAmount;
+    filter.type = 'lowpass';
+    filter.frequency.value = 620 + warmth * 1500;
+    filter.Q.value = .18;
+    lfo.frequency.value = .018 + index * .009;
+    lfoGain.gain.value = Math.max(.0004, partialGain.gain.value * (.025 + warmth * .05));
     lfo.connect(lfoGain).connect(partialGain.gain);
-    oscillator.connect(partialGain).connect(state.droneGain);
+    oscillator.connect(partialGain).connect(filter).connect(state.droneGain);
     oscillator.start(now); lfo.start(now);
     state.droneNodes.push(oscillator); state.lfoNodes.push(lfo);
   });
@@ -104,7 +110,7 @@ function updateDrone() {
 async function startListening() {
   if (state.isListening) return stopListening();
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: false, channelCount: 1 } });
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 } });
     setupAudio();
     state.analyser = state.audio.createAnalyser();
     state.analyser.fftSize = 2048;
@@ -127,13 +133,16 @@ function stopListening() {
 
 function autoCorrelate(buffer, sampleRate) {
   let rms = 0;
-  for (let i = 0; i < buffer.length; i++) rms += buffer[i] * buffer[i];
+  let peak = 0;
+  for (let i = 0; i < buffer.length; i++) { rms += buffer[i] * buffer[i]; peak = Math.max(peak, Math.abs(buffer[i])); }
   rms = Math.sqrt(rms / buffer.length);
-  if (rms < .012) return null;
+  const profileGate = state.inputProfile === 'voice' ? .0028 : .0022;
+  if (rms < profileGate || peak < .012) return null;
   const size = buffer.length;
   let start = 0; let end = size - 1;
-  while (start < size / 2 && Math.abs(buffer[start]) < .16) start++;
-  while (end > size / 2 && Math.abs(buffer[end]) < .16) end--;
+  const trimThreshold = Math.max(.006, peak * .16);
+  while (start < size / 2 && Math.abs(buffer[start]) < trimThreshold) start++;
+  while (end > size / 2 && Math.abs(buffer[end]) < trimThreshold) end--;
   const trimmed = buffer.slice(start, end);
   const correlations = new Float32Array(trimmed.length);
   for (let lag = 0; lag < trimmed.length; lag++) {
@@ -145,13 +154,16 @@ function autoCorrelate(buffer, sampleRate) {
   for (let i = dip; i < correlations.length; i++) {
     if (correlations[i] > max) { max = correlations[i]; maxIndex = i; }
   }
-  if (maxIndex <= 0 || max < .1) return null;
+  if (correlations[0] <= 0) return null;
+  const normalizedPeak = max / correlations[0];
+  if (maxIndex <= 0 || normalizedPeak < .26) return null;
   const left = correlations[maxIndex - 1] || correlations[maxIndex];
   const right = correlations[maxIndex + 1] || correlations[maxIndex];
   const shift = (right - left) / (2 * (2 * correlations[maxIndex] - right - left));
   const period = maxIndex + (Number.isFinite(shift) ? shift : 0);
   const frequency = sampleRate / period;
-  return frequency >= 65 && frequency <= 1350 ? { frequency, confidence: Math.min(1, rms * 15) } : null;
+  const range = state.inputProfile === 'voice' ? [72, 980] : [55, 1550];
+  return frequency >= range[0] && frequency <= range[1] ? { frequency, confidence: Math.min(1, rms * 90) } : null;
 }
 
 function readPitch() {
@@ -186,13 +198,14 @@ function updateDescriptors(interval) {
 
 function updateControls() {
   el.orb.classList.toggle('active', state.isDrone); el.orb.setAttribute('aria-pressed', state.isDrone);
-  el.orbCopy.innerHTML = state.isDrone ? 'release<br />home' : 'hold<br />home';
+  el.orbCopy.innerHTML = state.isListening ? 'listen<br />within' : state.isDrone ? 'release<br />home' : 'hold<br />home';
+  document.body.classList.toggle('is-listening', state.isListening);
   el.status.classList.toggle('active', state.isDrone || state.isListening);
-  el.statusText.textContent = state.isDrone ? 'DRONE OPEN' : state.isListening ? 'LISTENING' : 'DRONE STANDBY';
+  el.statusText.textContent = state.isListening ? 'FIELD LISTENING' : state.isDrone ? 'DRONE OPEN' : 'DRONE STANDBY';
   el.mic.classList.toggle('active', state.isListening); el.mic.textContent = state.isListening ? 'listening · stop' : 'enable listening';
   el.volumeOutput.value = `${state.volume}%`;
   el.warmthOutput.value = state.warmth < 35 ? 'pure' : state.warmth < 72 ? 'warm' : 'blooming';
-  el.target.textContent = `TONIC · ${noteNames[state.key]}`;
+  el.target.textContent = state.isListening ? `LISTENING · FIND ${noteNames[state.key]}` : `TONIC · ${noteNames[state.key]}`;
 }
 
 function draw(time) {
@@ -207,6 +220,16 @@ function draw(time) {
     const radius = 160 + index * 62 + Math.sin(t * (.34 + index * .03) + index) * (state.isDrone ? 9 : 2);
     ctx.beginPath(); ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
     ctx.strokeStyle = `rgba(221, 208, 240, ${.035 - index * .003})`; ctx.lineWidth = 1; ctx.stroke();
+  }
+  if (state.isListening) {
+    for (let petal = 0; petal < 12; petal++) {
+      const angle = petal / 12 * Math.PI * 2 + t * .12;
+      const radius = 220 + Math.sin(t * 1.4 + petal * .9) * 16;
+      const x = centerX + Math.cos(angle) * radius;
+      const y = centerY + Math.sin(angle) * radius * .79;
+      ctx.beginPath(); ctx.arc(x, y, 2.5 + Math.sin(t * 2 + petal) * .8, 0, Math.PI * 2);
+      ctx.fillStyle = petal % 3 === 0 ? 'rgba(224, 134, 159, .66)' : 'rgba(208, 184, 111, .42)'; ctx.fill();
+    }
   }
   if (state.detected) {
     const interval = state.detected.interval;
@@ -226,7 +249,11 @@ function draw(time) {
 
 function updateLiveCopy() {
   if (!state.detected) {
-    if (state.isListening) { el.pitch.textContent = 'listen'; el.pitchDetail.textContent = 'give the field one clear note'; }
+    if (state.isListening) {
+      el.pitch.textContent = 'listen'; el.pitchDetail.textContent = 'offer one clear note';
+      el.lessonText.textContent = 'The field is open. Sustain a note and let it show you its distance from home.';
+      el.lessonMeter.style.width = '54%';
+    }
     return;
   }
   const { midi, cents, interval } = state.detected;
@@ -243,11 +270,20 @@ el.orb.addEventListener('click', toggleDrone);
 el.mic.addEventListener('click', startListening);
 el.key.addEventListener('change', event => { state.key = Number(event.target.value); updateDrone(); updateControls(); });
 el.octave.addEventListener('change', event => { state.octave = Number(event.target.value); updateDrone(); });
+document.getElementById('input-profile').addEventListener('change', event => {
+  state.inputProfile = event.target.value;
+  el.pitchDetail.textContent = `${state.inputProfile} profile active`;
+});
 el.warmth.addEventListener('input', event => { state.warmth = Number(event.target.value); updateControls(); if (state.isDrone) updateDrone(); });
 el.volume.addEventListener('input', event => { state.volume = Number(event.target.value); updateControls(); if (state.isDrone) state.droneGain.gain.linearRampToValueAtTime((state.volume / 100) * .18, state.audio.currentTime + .08); });
 el.aboutTrigger.addEventListener('click', () => el.about.showModal());
 el.aboutClose.addEventListener('click', () => el.about.close());
 el.about.addEventListener('click', event => { if (event.target === el.about) el.about.close(); });
+el.controlsTrigger.addEventListener('click', () => {
+  const collapsed = el.controls.classList.toggle('is-collapsed');
+  el.controlsTrigger.setAttribute('aria-expanded', String(!collapsed));
+  el.controlsTrigger.textContent = collapsed ? 'tune field' : 'hide controls';
+});
 
 updateDescriptors(0); updateControls(); requestAnimationFrame(draw);
 setInterval(() => { readPitch(); updateLiveCopy(); }, 70);

@@ -5,10 +5,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#080b16" />
     <title>Tonal Field</title>
-    <link rel="stylesheet" href="styles.css?v=camera-left-1" />
+    <link rel="stylesheet" href="styles.css?v=gesture-cue-1" />
   </head>
   <body>
     <video id="camera-feed" class="camera-feed" autoplay muted playsinline aria-hidden="true"></video>
+    <canvas id="gesture-canvas" class="gesture-canvas" aria-hidden="true"></canvas>
     <main class="app-shell">
       <header class="topbar">
         <a class="wordmark" href="#top" aria-label="Tonal Field home">tonal field<span>·</span></a>
@@ -42,6 +43,7 @@
           </button>
           <p class="pitch-readout" id="pitch-readout">—</p>
           <p class="pitch-detail" id="pitch-detail">waiting for a note</p>
+          <p class="gesture-state" id="gesture-state">hold a fist to cue</p>
         </div>
 
         <aside class="descriptor-stream" aria-label="Interval descriptors">
@@ -88,6 +90,7 @@
             <input id="volume" type="range" min="0" max="100" value="48" />
           </div>
           <button id="mic-button" class="mic-button" type="button">enable listening</button>
+          <button id="calibrate-gesture" class="gesture-button" type="button">calibrate cue</button>
         </section>
       </section>
       <section class="practice-note"><p><strong>Headphones recommended.</strong> The field listens for one clear voice or instrument at a time.</p></section>
@@ -101,6 +104,7 @@
       <p class="dialog-note">This V1 uses your microphone locally in the browser. No audio is recorded or uploaded.</p>
     </dialog>
 
-    <script src="app.js?v=camera-left-1"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+    <script src="app.js?v=gesture-cue-1"></script>
   </body>
 </html>

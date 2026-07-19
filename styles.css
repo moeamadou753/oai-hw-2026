@@ -16,6 +16,7 @@ body { margin: 0; min-width: 320px; background: var(--field); color: var(--ink);
 button, select, input { font: inherit; }
 button { cursor: pointer; }
 .camera-feed { position: fixed; inset: 0; z-index: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0; pointer-events: none; transition: opacity .4s ease; }
+.gesture-canvas { position: fixed; inset: 0; z-index: 3; width: 100%; height: 100%; pointer-events: none; opacity: 0; transition: opacity .25s ease; }
 
 .app-shell { height: 100vh; min-height: 640px; overflow: hidden; display: flex; flex-direction: column; position: relative; z-index: 1; }
 .topbar { height: 74px; padding: 0 clamp(20px, 4vw, 64px); display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--line); position: relative; z-index: 4; }
@@ -61,6 +62,7 @@ h2 { font-size: clamp(40px, 4vw, 62px); line-height: .96; }
 .target-label { position: absolute; top: 13%; color: rgba(246,241,231,.54); font-size: 10px; letter-spacing: .16em; }
 .pitch-readout { position: absolute; bottom: 13%; margin: 0; font: 400 33px/1 var(--display); letter-spacing: -.03em; }
 .pitch-detail { position: absolute; bottom: 8%; margin: 0; color: var(--muted); font-size: 11px; letter-spacing: .04em; }
+.gesture-state { position: absolute; top: 18%; margin: 0; color: rgba(246,241,231,.62); font-size: 10px; letter-spacing: .13em; text-transform: uppercase; opacity: 0; transform: translateY(-4px); transition: opacity .25s ease, transform .25s ease; }
 
 .descriptor-stream { align-self: end; justify-self: end; width: min(100%, 238px); margin: 0 0 7px 0; }
 .descriptor-list { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
@@ -84,24 +86,30 @@ select option { background: #171725; }
 input[type="range"] { width: 100%; margin: 8px 0 5px; accent-color: var(--warm); }
 .mic-button { align-self: end; min-width: 148px; border: 1px solid rgba(255,190,92,.56); border-radius: 100px; padding: 11px 16px; color: var(--warm); background: rgba(255,190,92,.04); font-size: 12px; transition: background .2s, color .2s; }
 .mic-button.active, .mic-button:hover { background: var(--warm); color: #1b1520; }
+.gesture-button { grid-column: 1 / -1; justify-self: start; border: 0; padding: 1px 0 0; color: var(--muted); background: transparent; font-size: 10px; letter-spacing: .11em; text-transform: uppercase; }
+.gesture-button:hover { color: var(--warm); }
 .practice-note { display: none; }
 .practice-note p { max-width: 640px; margin: 0; }
 .practice-note strong { color: #d7d0d9; font-weight: 500; }
 
 body.camera-active { background: #0b0a0d; }
 body.camera-active .camera-feed { opacity: 1; transform: scaleX(-1); }
+body.camera-active .gesture-canvas { opacity: 1; }
 body.camera-active .topbar { display: none; }
 body.camera-active .experience { position: fixed; inset: 0; z-index: 2; display: grid; grid-template-columns: 1fr; grid-template-rows: 1fr; padding: 44px clamp(24px, 5vw, 84px); background: radial-gradient(circle at center, rgba(11, 10, 13, .08) 0, rgba(8, 8, 13, .42) 64%, rgba(5, 5, 8, .72) 100%); }
 body.camera-active .ambient, body.camera-active .practice-copy { display: none; }
-body.camera-active .camera-exit { display: block; left: auto; right: clamp(24px, 5vw, 84px); }
-body.camera-active .camera-controls-trigger { display: block; left: clamp(24px, 5vw, 84px); right: auto; }
-body.camera-active .field-wrap { width: min(75vw, 690px); max-height: min(82vh, 690px); grid-column: 1; grid-row: 1; }
+body.camera-active .camera-exit { display: block; }
+body.camera-active .camera-controls-trigger { display: block; }
+body.camera-active .field-wrap { width: min(75vw, 690px); max-height: min(82vh, 690px); grid-column: 1; grid-row: 1; transform: translateX(clamp(-310px, -15vw, -130px)); }
 body.camera-active .field-wrap::after { content: "CAMERA PRACTICE"; position: absolute; bottom: -4%; color: rgba(255,255,255,.64); font-size: 10px; letter-spacing: .16em; }
 body.camera-active .descriptor-stream { position: absolute; z-index: 4; left: clamp(24px, 5vw, 84px); bottom: 42px; width: min(300px, 36vw); }
 body.camera-active .lesson-card { position: absolute; z-index: 4; right: clamp(24px, 5vw, 84px); bottom: 42px; width: min(330px, 36vw); }
-body.camera-active .controls { top: 22px; right: auto; left: clamp(24px, 5vw, 84px); transform-origin: top left; background: rgba(12, 11, 15, .68); }
+body.camera-active .controls { top: 22px; right: clamp(24px, 5vw, 84px); left: auto; transform-origin: top right; background: rgba(12, 11, 15, .68); }
 body.camera-active .controls.is-collapsed { display: none; }
 body.camera-active .target-label, body.camera-active .pitch-readout, body.camera-active .pitch-detail { text-shadow: 0 2px 10px rgba(0,0,0,.72); }
+body.camera-active .gesture-state { opacity: 1; transform: translateY(0); text-shadow: 0 2px 10px rgba(0,0,0,.72); }
+body.is-queuing .orb-core { background: radial-gradient(circle at 36% 30%, #fff1c8 0, #d9ad68 20%, #9b5d6f 46%, #496851 72%, transparent 81%); box-shadow: 0 0 64px rgba(213, 179, 117, .58), inset -13px -10px 22px rgba(27, 50, 35, .38); }
+body.is-queuing .field-wrap::before { border-color: rgba(222, 190, 122, .72); opacity: .9; animation: listen-bloom 2s ease-in-out infinite; }
 
 dialog { max-width: min(530px, calc(100% - 36px)); border: 1px solid rgba(255,255,255,.2); border-radius: 2px; padding: 38px; color: var(--ink); background: #141322; box-shadow: 0 25px 80px rgba(0,0,0,.6); }
 dialog::backdrop { background: rgba(4, 5, 11, .72); backdrop-filter: blur(7px); }
@@ -126,14 +134,14 @@ dialog p { color: #c6c0ca; line-height: 1.65; }
   .controls { top: 18px; right: 20px; left: 20px; width: auto; grid-template-columns: 1fr 1fr; gap: 18px; }
   .wide-control { grid-column: span 1; }
   .mic-button { grid-column: span 2; justify-self: start; }
+  .gesture-button { grid-column: span 2; }
   .practice-note { display: block; padding: 0 20px 16px; color: var(--muted); font-size: 10px; line-height: 1.4; }
   body.camera-active .experience { padding: 60px 20px 28px; }
-  body.camera-active .field-wrap { width: min(94vw, 560px); max-height: 62vh; }
+  body.camera-active .field-wrap { width: min(94vw, 560px); max-height: 62vh; transform: translateX(-8vw); }
   body.camera-active .descriptor-stream { left: 20px; bottom: 26px; width: min(270px, 66vw); text-align: left; }
   body.camera-active .lesson-card { display: none; }
   body.camera-active .controls { top: 54px; }
-  body.camera-active .camera-controls-trigger { top: 18px; left: 20px; }
-  body.camera-active .camera-exit { right: 20px; }
+  body.camera-active .camera-controls-trigger { top: 18px; right: 20px; left: auto; }
 }
 
 @media (max-width: 500px) {
@@ -147,6 +155,7 @@ dialog p { color: #c6c0ca; line-height: 1.65; }
   .pitch-detail { bottom: 1%; }
   .controls { grid-template-columns: 1fr; max-height: calc(100vh - 110px); overflow-y: auto; }
   .wide-control, .mic-button { grid-column: auto; }
+  .gesture-button { grid-column: auto; }
   .mic-button { width: 100%; }
   .camera-button { padding: 7px 10px; font-size: 10px; }
   .topbar-actions { gap: 12px; }

@@ -26,7 +26,8 @@ const el = {
   about: document.getElementById('about-dialog'), aboutTrigger: document.getElementById('about-trigger'), aboutClose: document.getElementById('about-close'),
   controls: document.getElementById('controls'), controlsTrigger: document.getElementById('controls-trigger'),
   camera: document.getElementById('camera-feed'), cameraTrigger: document.getElementById('camera-trigger'), cameraExit: document.getElementById('camera-exit'),
-  cameraControlsTrigger: document.getElementById('camera-controls-trigger')
+  cameraControlsTrigger: document.getElementById('camera-controls-trigger'), gestureCanvas: document.getElementById('gesture-canvas'),
+  gestureState: document.getElementById('gesture-state'), calibrateGesture: document.getElementById('calibrate-gesture')
 };
 
 noteNames.forEach((name, index) => {
@@ -34,8 +35,9 @@ noteNames.forEach((name, index) => {
   el.key.add(option);
 });
 
-const state = { audio: null, droneGain: null, droneNodes: [], lfoNodes: [], isDrone: false, analyser: null, micStream: null, cameraStream: null, isListening: false, isCamera: false, key: 0, octave: 3, warmth: 54, volume: 48, sensitivity: 56, inputProfile: 'voice', detected: null, targetHistory: [], selectedDescriptors: new Set(JSON.parse(localStorage.getItem('tonal-field-descriptors') || '[]')) };
+const state = { audio: null, droneGain: null, droneNodes: [], lfoNodes: [], isDrone: false, analyser: null, micStream: null, cameraStream: null, hands: null, handLoopRunning: false, isListening: false, isCamera: false, isQueuing: false, isCalibrating: false, key: 0, octave: 3, warmth: 54, volume: 48, sensitivity: 56, inputProfile: 'voice', detected: null, targetHistory: [], gestureHold: null, gestureAwaitRelease: false, gestureCalibration: JSON.parse(localStorage.getItem('tonal-field-cue') || 'null'), selectedDescriptors: new Set(JSON.parse(localStorage.getItem('tonal-field-descriptors') || '[]')) };
 const ctx = el.canvas.getContext('2d');
+const gestureCtx = el.gestureCanvas.getContext('2d');
 let lastDescriptorInterval = null;
 
 function noteFrequency(midi) { return 440 * Math.pow(2, (midi - 69) / 12); }
@@ -144,6 +146,7 @@ async function enterCamera() {
     state.isCamera = true;
     document.body.classList.add('camera-active');
     setControlsCollapsed(true);
+    startHandTracking();
   } catch (error) {
     el.lessonText.textContent = 'Camera access was not available. You can keep practicing in the tonal field.';
     el.pitchDetail.textContent = 'camera permission needed';
@@ -155,8 +158,188 @@ function exitCamera() {
   state.cameraStream = null;
   el.camera.srcObject = null;
   state.isCamera = false;
+  state.handLoopRunning = false;
+  state.gestureHold = null;
+  state.gestureAwaitRelease = false;
+  clearGestureCanvas();
   document.body.classList.remove('camera-active');
   setControlsCollapsed(true);
+}
+
+function pointDistance(a, b) {
+  return Math.hypot(a.x - b.x, a.y - b.y, (a.z || 0) - (b.z || 0));
+}
+
+function averagePoint(points) {
+  return points.reduce((total, point) => ({ x: total.x + point.x, y: total.y + point.y, z: total.z + (point.z || 0) }), { x: 0, y: 0, z: 0 });
+}
+
+function normalize(vector) {
+  const length = Math.hypot(vector.x, vector.y, vector.z);
+  return length ? { x: vector.x / length, y: vector.y / length, z: vector.z / length } : { x: 0, y: 0, z: 0 };
+}
+
+function dot(a, b) { return a.x * b.x + a.y * b.y + a.z * b.z; }
+
+function handPose(landmarks) {
+  const knuckles = [5, 9, 13, 17].map(index => landmarks[index]);
+  const centerTotal = averagePoint(knuckles);
+  const center = { x: centerTotal.x / knuckles.length, y: centerTotal.y / knuckles.length, z: centerTotal.z / knuckles.length };
+  const width = Math.max(pointDistance(landmarks[5], landmarks[17]), .001);
+  const ratios = [[8, 6], [12, 10], [16, 14], [20, 18]].map(([tip, pip]) => pointDistance(landmarks[tip], landmarks[0]) / Math.max(pointDistance(landmarks[pip], landmarks[0]), .001));
+  const a = { x: landmarks[5].x - landmarks[0].x, y: landmarks[5].y - landmarks[0].y, z: landmarks[5].z - landmarks[0].z };
+  const b = { x: landmarks[17].x - landmarks[0].x, y: landmarks[17].y - landmarks[0].y, z: landmarks[17].z - landmarks[0].z };
+  const normal = normalize({ x: a.y * b.z - a.z * b.y, y: a.z * b.x - a.x * b.z, z: a.x * b.y - a.y * b.x });
+  return { center, width, ratios, normal };
+}
+
+function isClosedFist(pose) {
+  return pose.ratios.filter(ratio => ratio < 1.1).length >= 3;
+}
+
+function matchesCalibration(pose) {
+  if (!state.gestureCalibration) return true;
+  const ratioDifference = pose.ratios.reduce((total, ratio, index) => total + Math.abs(ratio - state.gestureCalibration.ratios[index]), 0) / pose.ratios.length;
+  return ratioDifference < .22 && dot(pose.normal, state.gestureCalibration.normal) > .45;
+}
+
+function isSteady(pose, reference) {
+  return pointDistance(pose.center, reference.center) < .07 && dot(pose.normal, reference.normal) > .48;
+}
+
+function clearGestureCanvas() {
+  gestureCtx.clearRect(0, 0, el.gestureCanvas.width, el.gestureCanvas.height);
+}
+
+function resizeGestureCanvas() {
+  const ratio = window.devicePixelRatio || 1;
+  const width = window.innerWidth;
+  const height = window.innerHeight;
+  if (el.gestureCanvas.width !== width * ratio || el.gestureCanvas.height !== height * ratio) {
+    el.gestureCanvas.width = width * ratio;
+    el.gestureCanvas.height = height * ratio;
+    gestureCtx.setTransform(ratio, 0, 0, ratio, 0, 0);
+  }
+}
+
+function drawGestureCue(pose, progress, mode) {
+  resizeGestureCanvas();
+  clearGestureCanvas();
+  const x = (1 - pose.center.x) * window.innerWidth;
+  const y = pose.center.y * window.innerHeight;
+  const radius = Math.max(42, Math.min(92, pose.width * window.innerWidth * .76));
+  const color = mode === 'calibrate' ? '196, 215, 162' : state.isQueuing ? '232, 202, 123' : '235, 163, 179';
+  gestureCtx.lineCap = 'round';
+  gestureCtx.beginPath();
+  gestureCtx.arc(x, y, radius, -Math.PI / 2, Math.PI * 1.5);
+  gestureCtx.strokeStyle = `rgba(${color}, .24)`;
+  gestureCtx.lineWidth = 3;
+  gestureCtx.stroke();
+  gestureCtx.beginPath();
+  gestureCtx.arc(x, y, radius, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * progress);
+  gestureCtx.strokeStyle = `rgba(${color}, .96)`;
+  gestureCtx.lineWidth = 3;
+  gestureCtx.shadowBlur = 16;
+  gestureCtx.shadowColor = `rgb(${color})`;
+  gestureCtx.stroke();
+  gestureCtx.shadowBlur = 0;
+  const countdown = Math.max(1, 3 - Math.floor(progress * 3));
+  gestureCtx.fillStyle = 'rgba(255, 249, 238, .96)';
+  gestureCtx.font = '500 22px Inter, system-ui, sans-serif';
+  gestureCtx.textAlign = 'center';
+  gestureCtx.textBaseline = 'middle';
+  gestureCtx.fillText(String(countdown), x, y - 5);
+  gestureCtx.fillStyle = `rgba(${color}, .88)`;
+  gestureCtx.font = '500 9px Inter, system-ui, sans-serif';
+  gestureCtx.fillText(mode === 'calibrate' ? 'SAVE CUE' : state.isQueuing ? 'EXIT QUEUE' : 'ENTER QUEUE', x, y + 17);
+}
+
+function updateGestureState(text) {
+  el.gestureState.textContent = text;
+}
+
+function resetGestureHold() {
+  state.gestureHold = null;
+  clearGestureCanvas();
+  if (state.isCamera && !state.isCalibrating) updateGestureState(state.isQueuing ? 'hold a fist to exit queue' : 'hold a fist to cue');
+}
+
+function saveCalibration(pose) {
+  state.gestureCalibration = { ratios: pose.ratios, normal: pose.normal };
+  localStorage.setItem('tonal-field-cue', JSON.stringify(state.gestureCalibration));
+  state.isCalibrating = false;
+  state.gestureAwaitRelease = true;
+  resetGestureHold();
+  updateGestureState('cue saved · release your hand');
+}
+
+function toggleQueuing() {
+  state.isQueuing = !state.isQueuing;
+  state.gestureAwaitRelease = true;
+  resetGestureHold();
+  updateControls();
+  updateGestureState(state.isQueuing ? 'queuing · release your hand' : 'queue released · release your hand');
+}
+
+function evaluateGesture(pose) {
+  const mode = state.isCalibrating ? 'calibrate' : 'cue';
+  const candidate = isClosedFist(pose) && (state.isCalibrating || matchesCalibration(pose));
+  if (!candidate) {
+    if (state.gestureAwaitRelease) state.gestureAwaitRelease = false;
+    resetGestureHold();
+    return;
+  }
+  if (state.gestureAwaitRelease) return;
+  const now = performance.now();
+  if (!state.gestureHold || !isSteady(pose, state.gestureHold.pose)) state.gestureHold = { pose, startedAt: now };
+  const progress = Math.min(1, (now - state.gestureHold.startedAt) / 3000);
+  updateGestureState(state.isCalibrating ? 'hold steady to save your cue' : state.isQueuing ? 'hold steady to leave queue' : 'hold steady to enter queue');
+  drawGestureCue(pose, progress, mode);
+  if (progress >= 1) {
+    if (state.isCalibrating) saveCalibration(pose); else toggleQueuing();
+  }
+}
+
+function onHandResults(results) {
+  const landmarks = results.multiHandLandmarks?.[0];
+  if (!landmarks) {
+    if (state.gestureAwaitRelease) state.gestureAwaitRelease = false;
+    resetGestureHold();
+    return;
+  }
+  evaluateGesture(handPose(landmarks));
+}
+
+async function handTrackingLoop() {
+  if (!state.handLoopRunning || !state.isCamera) return;
+  if (el.camera.readyState >= 2) await state.hands.send({ image: el.camera });
+  requestAnimationFrame(handTrackingLoop);
+}
+
+function startHandTracking() {
+  if (state.handLoopRunning) return;
+  if (typeof window.Hands !== 'function') {
+    updateGestureState('hand tracking unavailable');
+    return;
+  }
+  if (!state.hands) {
+    state.hands = new window.Hands({ locateFile: file => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}` });
+    state.hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: .66, minTrackingConfidence: .62 });
+    state.hands.onResults(onHandResults);
+  }
+  state.handLoopRunning = true;
+  updateGestureState(state.isQueuing ? 'hold a fist to exit queue' : 'hold a fist to cue');
+  handTrackingLoop();
+}
+
+async function beginGestureCalibration() {
+  if (!state.isCamera) await enterCamera();
+  if (!state.isCamera) return;
+  state.isCalibrating = true;
+  state.gestureAwaitRelease = false;
+  resetGestureHold();
+  setControlsCollapsed(true);
+  updateGestureState('show your cue fist · knuckles to camera');
 }
 
 function autoCorrelate(buffer, sampleRate) {
@@ -227,15 +410,16 @@ function updateDescriptors(interval) {
 
 function updateControls() {
   el.orb.classList.toggle('active', state.isDrone); el.orb.setAttribute('aria-pressed', state.isDrone);
-  el.orbCopy.innerHTML = state.isListening ? 'listen<br />within' : state.isDrone ? 'release<br />home' : 'hold<br />home';
+  el.orbCopy.innerHTML = state.isQueuing ? 'cue<br />ready' : state.isListening ? 'listen<br />within' : state.isDrone ? 'release<br />home' : 'hold<br />home';
   document.body.classList.toggle('is-listening', state.isListening);
+  document.body.classList.toggle('is-queuing', state.isQueuing);
   el.status.classList.toggle('active', state.isDrone || state.isListening);
   el.statusText.textContent = state.isListening ? 'FIELD LISTENING' : state.isDrone ? 'DRONE OPEN' : 'DRONE STANDBY';
   el.mic.classList.toggle('active', state.isListening); el.mic.textContent = state.isListening ? 'listening · stop' : 'enable listening';
   el.volumeOutput.value = `${state.volume}%`;
   el.warmthOutput.value = state.warmth < 35 ? 'pure' : state.warmth < 72 ? 'warm' : 'blooming';
   el.sensitivityOutput.value = state.sensitivity < 35 ? 'focused' : state.sensitivity < 72 ? 'balanced' : 'open';
-  el.target.textContent = state.isListening ? `LISTENING · FIND ${noteNames[state.key]}` : `TONIC · ${noteNames[state.key]}`;
+  el.target.textContent = state.isQueuing ? `QUEUING · ${noteNames[state.key]}` : state.isListening ? `LISTENING · FIND ${noteNames[state.key]}` : `TONIC · ${noteNames[state.key]}`;
 }
 
 function draw(time) {
@@ -324,6 +508,8 @@ el.controlsTrigger.addEventListener('click', toggleControls);
 el.cameraControlsTrigger.addEventListener('click', toggleControls);
 el.cameraTrigger.addEventListener('click', enterCamera);
 el.cameraExit.addEventListener('click', exitCamera);
+el.calibrateGesture.addEventListener('click', beginGestureCalibration);
+window.addEventListener('resize', clearGestureCanvas);
 
 updateDescriptors(0); updateControls(); requestAnimationFrame(draw);
 setInterval(() => { readPitch(); updateLiveCopy(); }, 70);

@@ -36,7 +36,7 @@ noteNames.forEach((name, index) => {
   el.key.add(option);
 });
 
-const state = { audio: null, droneGain: null, droneNodes: [], lfoNodes: [], isDrone: false, analyser: null, micStream: null, micSource: null, microphoneId: localStorage.getItem('tonal-field-microphone') || 'default', cameraStream: null, hands: null, handLoopRunning: false, isListening: false, isCamera: false, isCueMode: false, isCalibrating: false, cueRecording: null, cueGate: null, autoTeachOnRelease: false, key: 0, octave: 3, warmth: 54, volume: 48, sensitivity: 56, inputProfile: 'voice', detected: null, targetHistory: [], gestureHold: null, smoothedPose: null, gestureAwaitRelease: false, motionBuffer: [], stopBuffer: [], cueCooldownUntil: 0, stopCooldownUntil: 0, currentHandLabel: null, activeCueHandLabel: null, cueTemplates: JSON.parse(localStorage.getItem('tonal-field-cue-motion') || '[]'), gestureCalibration: JSON.parse(localStorage.getItem('tonal-field-cue') || 'null'), selectedDescriptors: new Set(JSON.parse(localStorage.getItem('tonal-field-descriptors') || '[]')) };
+const state = { audio: null, droneGain: null, droneNodes: [], lfoNodes: [], isDrone: false, analyser: null, micStream: null, micSource: null, microphoneId: localStorage.getItem('tonal-field-microphone') || 'default', cameraStream: null, hands: null, handLoopRunning: false, isListening: false, isCamera: false, isCueMode: false, isCalibrating: false, cueRecording: null, cueGate: null, autoTeachOnRelease: false, key: 0, octave: 3, warmth: 54, volume: 48, sensitivity: 56, inputProfile: 'voice', detected: null, targetHistory: [], gestureHold: null, smoothedPose: null, gestureAwaitRelease: false, motionBuffer: [], stopBuffer: [], cueCooldownUntil: 0, stopCooldownUntil: 0, currentHandLabel: null, activeCueHandLabel: null, activeCueHandPosition: null, cueTemplates: JSON.parse(localStorage.getItem('tonal-field-cue-motion') || '[]'), gestureCalibration: JSON.parse(localStorage.getItem('tonal-field-cue') || 'null'), selectedDescriptors: new Set(JSON.parse(localStorage.getItem('tonal-field-descriptors') || '[]')) };
 const ctx = el.canvas.getContext('2d');
 const gestureCtx = el.gestureCanvas.getContext('2d');
 let lastDescriptorInterval = null;
@@ -255,6 +255,8 @@ function exitCamera() {
   state.gestureHold = null;
   state.smoothedPose = null;
   state.gestureAwaitRelease = false;
+  state.activeCueHandLabel = null;
+  state.activeCueHandPosition = null;
   state.cueRecording = null;
   document.body.classList.remove('is-recording');
   clearMotionBuffer();
@@ -293,6 +295,22 @@ function handPose(landmarks) {
   const b = { x: landmarks[17].x - landmarks[0].x, y: landmarks[17].y - landmarks[0].y, z: landmarks[17].z - landmarks[0].z };
   const normal = normalize({ x: a.y * b.z - a.z * b.y, y: a.z * b.x - a.x * b.z, z: a.x * b.y - a.y * b.x });
   return { center, fingerCenter, width, ratios, normal };
+}
+
+function closestCueHandIndex(allHands, reference) {
+  if (!reference) return -1;
+  let closestIndex = -1;
+  let closestDistance = Infinity;
+  allHands.forEach((landmarks, index) => {
+    const distance = pointDistance(handPose(landmarks).center, reference);
+    if (distance < closestDistance) {
+      closestDistance = distance;
+      closestIndex = index;
+    }
+  });
+  // A hand can briefly lose or flip its handedness label as it rotates. Keep
+  // following the same physical hand, but do not jump across the frame.
+  return closestDistance < .3 ? closestIndex : -1;
 }
 
 function isClosedFist(pose) {
@@ -480,7 +498,8 @@ function loopMetrics(points) {
   const tail = points.slice(-Math.min(4, points.length));
   const startGrip = head.reduce((total, point) => total + point.grip, 0) / head.length;
   const endGrip = tail.reduce((total, point) => total + point.grip, 0) / tail.length;
-  return { duration, width, height, pathLength, winding: Math.abs(winding), returnDistance: Math.hypot(last.x - first.x, last.y - first.y), startGrip, endGrip, gripGain: endGrip - startGrip };
+  const endsInFist = tail.some(point => point.isFist);
+  return { duration, width, height, pathLength, winding: Math.abs(winding), returnDistance: Math.hypot(last.x - first.x, last.y - first.y), startGrip, endGrip, gripGain: endGrip - startGrip, endsInFist };
 }
 
 function handGrip(pose) {
@@ -490,14 +509,15 @@ function handGrip(pose) {
 function evaluateReleaseLoop(pose) {
   if (!state.isCueMode || !state.isDrone || state.isCalibrating || state.cueRecording || performance.now() < state.stopCooldownUntil) return false;
   const now = performance.now();
-  state.stopBuffer.push({ ...mirroredPoint(pose, now), grip: handGrip(pose) });
+  state.stopBuffer.push({ ...mirroredPoint(pose, now), grip: handGrip(pose), isFist: isClosedFist(pose) });
   state.stopBuffer = state.stopBuffer.filter(point => now - point.at < 1300);
   const metrics = loopMetrics(state.stopBuffer);
   if (!metrics) return false;
-  const closesIntoRelease = metrics.startGrip < .48 && metrics.endGrip > .62 && metrics.gripGain > .25;
-  const curvedMotion = metrics.width > .045 && metrics.height > .045 && metrics.pathLength > .18 && metrics.winding > 1.55;
-  const returningStroke = metrics.pathLength > .28 && metrics.returnDistance < .18;
-  const isReleaseGesture = metrics.duration > 280 && metrics.duration < 1250 && closesIntoRelease && (curvedMotion || returningStroke);
+  const closesIntoRelease = metrics.startGrip < .68 && (metrics.endsInFist || (metrics.endGrip > .52 && metrics.gripGain > .16));
+  const movingStroke = metrics.width > .028 && metrics.height > .028 && metrics.pathLength > .14;
+  const curvedMotion = metrics.winding > .8;
+  const returningStroke = metrics.pathLength > .2 && metrics.returnDistance < .22;
+  const isReleaseGesture = metrics.duration > 220 && metrics.duration < 1350 && closesIntoRelease && movingStroke && (curvedMotion || returningStroke);
   if (!isReleaseGesture) return false;
   state.stopCooldownUntil = now + 1200;
   clearMotionBuffer();
@@ -597,6 +617,7 @@ async function beginCueMotionRecording({ restart = false } = {}) {
   if (!state.isCueMode) {
     state.isCueMode = true;
     state.activeCueHandLabel = state.currentHandLabel;
+    state.activeCueHandPosition = state.smoothedPose?.center || null;
     state.gestureAwaitRelease = false;
     updateControls();
   }
@@ -751,6 +772,7 @@ function toggleCueMode() {
   const enteringCueMode = !state.isCueMode;
   state.isCueMode = enteringCueMode;
   state.activeCueHandLabel = enteringCueMode ? state.currentHandLabel : null;
+  state.activeCueHandPosition = enteringCueMode ? state.smoothedPose?.center || null : null;
   state.gestureAwaitRelease = true;
   state.cueRecording = null;
   state.autoTeachOnRelease = enteringCueMode && state.cueTemplates.length < 3;
@@ -792,9 +814,22 @@ function onHandResults(results) {
   const allHands = results.multiHandLandmarks || [];
   const handLabels = results.multiHandedness || [];
   let activeIndex = 0;
-  if (state.isCueMode && state.activeCueHandLabel) {
-    const matchedIndex = handLabels.findIndex(handedness => handedness.label === state.activeCueHandLabel);
-    activeIndex = matchedIndex;
+  if (state.isCueMode && (state.activeCueHandLabel || state.activeCueHandPosition)) {
+    const matchingIndexes = handLabels
+      .map((handedness, index) => handedness.label === state.activeCueHandLabel ? index : -1)
+      .filter(index => index >= 0);
+    activeIndex = matchingIndexes.length === 1
+      ? matchingIndexes[0]
+      : matchingIndexes.reduce((closest, index) => {
+        if (closest < 0 || !state.activeCueHandPosition) return index;
+        const distance = pointDistance(handPose(allHands[index]).center, state.activeCueHandPosition);
+        const closestDistance = pointDistance(handPose(allHands[closest]).center, state.activeCueHandPosition);
+        return distance < closestDistance ? index : closest;
+      }, -1);
+    const selectedDistance = activeIndex >= 0 && state.activeCueHandPosition
+      ? pointDistance(handPose(allHands[activeIndex]).center, state.activeCueHandPosition)
+      : 0;
+    if (activeIndex < 0 || selectedDistance >= .3) activeIndex = closestCueHandIndex(allHands, state.activeCueHandPosition);
   }
   const landmarks = activeIndex >= 0 ? allHands[activeIndex] : null;
   if (!landmarks) {
@@ -825,6 +860,7 @@ function onHandResults(results) {
   }
   state.currentHandLabel = handLabels[activeIndex]?.label || null;
   const pose = smoothPose(handPose(landmarks));
+  if (state.isCueMode) state.activeCueHandPosition = pose.center;
   if (state.cueRecording) {
     state.cueRecording.missingSince = null;
     captureCueMotion(pose);

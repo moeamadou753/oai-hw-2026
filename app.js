@@ -36,7 +36,7 @@ noteNames.forEach((name, index) => {
   el.key.add(option);
 });
 
-const state = { audio: null, droneGain: null, droneNodes: [], lfoNodes: [], isDrone: false, analyser: null, micStream: null, micSource: null, microphoneId: localStorage.getItem('tonal-field-microphone') || 'default', cameraStream: null, hands: null, handLoopRunning: false, isListening: false, isCamera: false, isCueMode: false, isCalibrating: false, cueRecording: null, cueGate: null, autoTeachOnRelease: false, key: 0, octave: 3, warmth: 54, volume: 48, sensitivity: 56, inputProfile: 'voice', detected: null, targetHistory: [], gestureHold: null, smoothedPose: null, gestureAwaitRelease: false, motionBuffer: [], stopBuffer: [], cueCooldownUntil: 0, stopCooldownUntil: 0, currentHandLabel: null, activeCueHandLabel: null, activeCueHandPosition: null, cueTemplates: JSON.parse(localStorage.getItem('tonal-field-cue-motion') || '[]'), gestureCalibration: JSON.parse(localStorage.getItem('tonal-field-cue') || 'null'), selectedDescriptors: new Set(JSON.parse(localStorage.getItem('tonal-field-descriptors') || '[]')) };
+const state = { audio: null, droneGain: null, droneNodes: [], lfoNodes: [], isDrone: false, analyser: null, micStream: null, micSource: null, microphoneId: localStorage.getItem('tonal-field-microphone') || 'default', cameraStream: null, hands: null, handLoopRunning: false, isListening: false, isCamera: false, isCueMode: false, isCalibrating: false, cueRecording: null, cueGate: null, cuePhase: 'idle', cueAnchor: null, cueStartedAt: 0, cueStillSince: 0, autoTeachOnRelease: false, key: 0, octave: 3, warmth: 54, volume: 48, sensitivity: 56, inputProfile: 'voice', detected: null, targetHistory: [], gestureHold: null, smoothedPose: null, gestureAwaitRelease: false, motionBuffer: [], stopBuffer: [], cueCooldownUntil: 0, stopCooldownUntil: 0, currentHandLabel: null, activeCueHandLabel: null, activeCueHandPosition: null, cueTemplates: JSON.parse(localStorage.getItem('tonal-field-cue-motion') || '[]'), gestureCalibration: JSON.parse(localStorage.getItem('tonal-field-cue') || 'null'), selectedDescriptors: new Set(JSON.parse(localStorage.getItem('tonal-field-descriptors') || '[]')) };
 const ctx = el.canvas.getContext('2d');
 const gestureCtx = el.gestureCanvas.getContext('2d');
 let lastDescriptorInterval = null;
@@ -412,7 +412,7 @@ function mirroredPoint(pose, at = performance.now()) {
 }
 
 function isReadyHandSteady(pose, reference) {
-  return pointDistance(pose.center, reference.center) < .022 && dot(pose.normal, reference.normal) > .42;
+  return pointDistance(pose.center, reference.center) < .035 && dot(pose.normal, reference.normal) > .25;
 }
 
 function beginsCueMotion(pose, reference) {
@@ -466,6 +466,36 @@ function recordMotionPoint(pose) {
   const now = performance.now();
   state.motionBuffer.push(mirroredPoint(pose, now));
   state.motionBuffer = state.motionBuffer.filter(point => now - point.at < 2200);
+}
+
+function motionPathLength(points) {
+  return points.slice(1).reduce((total, point, index) => total + Math.hypot(point.x - points[index].x, point.y - points[index].y), 0);
+}
+
+function beginLiveCueTracking(pose) {
+  state.cuePhase = 'ready';
+  state.cueAnchor = pose;
+  state.cueStartedAt = 0;
+  state.cueStillSince = 0;
+  clearMotionBuffer();
+  clearGestureCanvas();
+  updateGestureState('cue mode ready · trace your cue');
+}
+
+function beginLiveCueTrace(pose, now) {
+  state.cuePhase = 'tracing';
+  state.cueStartedAt = now;
+  state.motionBuffer = [mirroredPoint(state.cueAnchor, now - 50), mirroredPoint(pose, now)];
+  updateGestureState('cue in motion');
+  drawMotionTrail();
+}
+
+function completeLiveCue(pose, now) {
+  state.cuePhase = 'cooldown';
+  state.cueAnchor = pose;
+  state.cueStillSince = now;
+  state.cueCooldownUntil = now + 700;
+  updateGestureState('cue received · drone blooms');
 }
 
 function loopMetrics(points) {
@@ -594,7 +624,9 @@ function cueTemplateScore(template, points) {
 }
 
 function cuePrompt() {
-  return state.cueTemplates.length >= 3 ? 'settle to arm · circle to release · fist exits mode' : 'record 3 cue motions in tune · fist exits mode';
+  return state.cueTemplates.length >= 3
+    ? 'cue mode ready · trace your cue · circle to release'
+    : 'cue mode ready · trace your cue · teach a custom cue in controls';
 }
 
 function updateCueRecordButton() {
@@ -627,6 +659,7 @@ async function beginCueMotionRecording({ restart = false } = {}) {
     updateCueRecordButton();
   }
   state.cueRecording = { phase: 'waiting', startedAt: null, points: [] };
+  state.cuePhase = 'recording';
   document.body.classList.add('is-recording');
   state.gestureHold = null;
   state.gestureAwaitRelease = false;
@@ -702,6 +735,8 @@ function captureCueMotion(pose) {
     state.cueRecording = null;
     document.body.classList.remove('is-recording');
     resetCueGate();
+    state.cuePhase = 'ready';
+    state.cueAnchor = pose;
     updateGestureState('cue vocabulary saved · try it');
   }
   return true;
@@ -710,26 +745,49 @@ function captureCueMotion(pose) {
 async function evaluateCueMotion(pose) {
   if (!state.isCueMode || state.isCalibrating || state.gestureAwaitRelease) return;
   if (captureCueMotion(pose)) return;
-  if (state.cueTemplates.length < 3) {
-    updateGestureState(cuePrompt());
+  const now = performance.now();
+  if (state.cuePhase === 'idle' || state.cuePhase === 'await-release' || !state.cueAnchor) beginLiveCueTracking(pose);
+
+  if (state.cuePhase === 'cooldown') {
+    if (pointDistance(pose.center, state.cueAnchor.center) > .045) {
+      state.cueAnchor = pose;
+      state.cueStillSince = now;
+      return;
+    }
+    if (now >= state.cueCooldownUntil && now - state.cueStillSince > 260) beginLiveCueTracking(pose);
     return;
   }
-  const now = performance.now();
-  if (now < state.cueCooldownUntil) return;
-  if (!state.motionBuffer.length) {
-    const opening = advanceCueGate(pose, { open: 'open your hand to begin', settle: 'settle your open hand to arm', armed: 'armed · begin your cue' });
-    if (!opening) return;
-    state.motionBuffer = opening;
-    updateGestureState('cue in motion');
-  } else {
-    recordMotionPoint(pose);
+
+  if (state.cuePhase === 'ready') {
+    if (!beginsCueMotion(pose, state.cueAnchor)) {
+      state.cueAnchor = blendPose(state.cueAnchor, pose, .05);
+      return;
+    }
+    beginLiveCueTrace(pose, now);
+    return;
   }
+
+  if (state.cuePhase !== 'tracing') return;
+  const previousPoint = state.motionBuffer.at(-1);
+  if (previousPoint && now - previousPoint.at > 500) {
+    beginLiveCueTracking(pose);
+    return;
+  }
+  recordMotionPoint(pose);
+  drawMotionTrail();
+
+  if (state.cueTemplates.length < 3) {
+    const hasEnoughGesture = now - state.cueStartedAt > 220 && motionPathLength(state.motionBuffer) > .055;
+    if (!hasEnoughGesture) return;
+    completeLiveCue(pose, now);
+    await cueDrone();
+    return;
+  }
+
   const latest = state.motionBuffer.at(-1);
   const maximumDuration = Math.max(...state.cueTemplates.map(template => template.duration)) * 1.48;
   if (latest.at - state.motionBuffer[0].at > maximumDuration) {
-    clearMotionBuffer();
-    resetCueGate();
-    updateGestureState('cue reset · settle your hand to arm');
+    beginLiveCueTracking(pose);
     return;
   }
   const bestScore = Math.min(...state.cueTemplates.map(template => {
@@ -739,14 +797,11 @@ async function evaluateCueMotion(pose) {
     return cueTemplateScore(template, points);
   }));
   if (bestScore < CUE_MATCH_THRESHOLD) {
-    state.cueCooldownUntil = now + 1600;
-    clearMotionBuffer();
-    updateGestureState('cue received · drone blooms');
+    completeLiveCue(pose, now);
     await cueDrone();
     return;
   }
-  updateGestureState('follow your recorded cue · fist to exit');
-  drawMotionTrail();
+  updateGestureState('tracing your cue · fist exits mode');
 }
 
 function resetGestureHold() {
@@ -775,7 +830,11 @@ function toggleCueMode() {
   state.activeCueHandPosition = enteringCueMode ? state.smoothedPose?.center || null : null;
   state.gestureAwaitRelease = true;
   state.cueRecording = null;
-  state.autoTeachOnRelease = enteringCueMode && state.cueTemplates.length < 3;
+  state.cuePhase = enteringCueMode ? 'await-release' : 'idle';
+  state.cueAnchor = null;
+  state.cueStartedAt = 0;
+  state.cueStillSince = 0;
+  state.autoTeachOnRelease = false;
   document.body.classList.remove('is-recording');
   clearMotionBuffer();
   clearStopBuffer();
@@ -789,12 +848,13 @@ function evaluateGesture(pose) {
   const mode = state.isCalibrating ? 'calibrate' : 'cue';
   const candidate = isClosedFist(pose) && (state.isCalibrating || matchesCalibration(pose));
   if (!candidate) {
-    const shouldStartAutoTeach = state.gestureAwaitRelease && state.autoTeachOnRelease && state.isCueMode;
-    if (state.gestureAwaitRelease) state.gestureAwaitRelease = false;
-    resetGestureHold();
-    if (shouldStartAutoTeach) {
-      state.autoTeachOnRelease = false;
-      beginCueMotionRecording();
+    const wasAwaitingRelease = state.gestureAwaitRelease;
+    if (wasAwaitingRelease) {
+      state.gestureAwaitRelease = false;
+      resetGestureHold();
+      if (state.isCueMode && !state.isCalibrating && !state.cueRecording) beginLiveCueTracking(pose);
+    } else if (state.gestureHold) {
+      resetGestureHold();
     }
     return;
   }
@@ -833,8 +893,6 @@ function onHandResults(results) {
   }
   const landmarks = activeIndex >= 0 ? allHands[activeIndex] : null;
   if (!landmarks) {
-    const shouldStartAutoTeach = state.gestureAwaitRelease && state.autoTeachOnRelease && state.isCueMode;
-    if (state.gestureAwaitRelease) state.gestureAwaitRelease = false;
     let recordingInterrupted = false;
     if (state.cueRecording) {
       if (state.cueRecording.phase === 'waiting' || state.cueRecording.phase === 'interlude') {
@@ -849,13 +907,14 @@ function onHandResults(results) {
       recordingInterrupted = true;
     }
     state.smoothedPose = null;
-    clearMotionBuffer();
-    resetGestureHold();
-    if (recordingInterrupted) updateGestureState('recording paused · show your hand and try again');
-    if (shouldStartAutoTeach) {
-      state.autoTeachOnRelease = false;
-      beginCueMotionRecording();
+    if (!state.isCueMode || state.cueRecording || state.isCalibrating) {
+      clearMotionBuffer();
+      resetGestureHold();
+    } else {
+      state.gestureHold = null;
+      updateGestureState('cue mode ready · show your cue hand');
     }
+    if (recordingInterrupted) updateGestureState('recording paused · show your hand and try again');
     return;
   }
   state.currentHandLabel = handLabels[activeIndex]?.label || null;

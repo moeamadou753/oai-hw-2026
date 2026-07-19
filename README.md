@@ -20,6 +20,7 @@ Open [http://localhost:4173](http://localhost:4173). Click **hold home** to star
 - Local, real-time monophonic microphone pitch tracking.
 - A tonal-field visual that distinguishes stable intervals from tension.
 - A personal, persistent descriptor stream: select words that match how an interval lands for you.
+- An optional mirrored camera practice view with a three-second fist hold for Cue Mode. Record three examples of your own conducting cue; their normalized hand trajectories stay in local browser storage and can re-articulate the drone.
 
 ## Evaluation Criteria
 

@@ -36,10 +36,14 @@ noteNames.forEach((name, index) => {
   el.key.add(option);
 });
 
-const state = { audio: null, droneGain: null, droneNodes: [], lfoNodes: [], isDrone: false, analyser: null, micStream: null, cameraStream: null, hands: null, handLoopRunning: false, isListening: false, isCamera: false, isCueMode: false, isCalibrating: false, cueRecording: null, key: 0, octave: 3, warmth: 54, volume: 48, sensitivity: 56, inputProfile: 'voice', detected: null, targetHistory: [], gestureHold: null, smoothedPose: null, gestureAwaitRelease: false, motionBuffer: [], cueCooldownUntil: 0, currentHandLabel: null, activeCueHandLabel: null, cueTemplates: JSON.parse(localStorage.getItem('tonal-field-cue-motion') || '[]'), gestureCalibration: JSON.parse(localStorage.getItem('tonal-field-cue') || 'null'), selectedDescriptors: new Set(JSON.parse(localStorage.getItem('tonal-field-descriptors') || '[]')) };
+const state = { audio: null, droneGain: null, droneNodes: [], lfoNodes: [], isDrone: false, analyser: null, micStream: null, cameraStream: null, hands: null, handLoopRunning: false, isListening: false, isCamera: false, isCueMode: false, isCalibrating: false, cueRecording: null, cueGate: null, autoTeachOnRelease: false, key: 0, octave: 3, warmth: 54, volume: 48, sensitivity: 56, inputProfile: 'voice', detected: null, targetHistory: [], gestureHold: null, smoothedPose: null, gestureAwaitRelease: false, motionBuffer: [], cueCooldownUntil: 0, currentHandLabel: null, activeCueHandLabel: null, cueTemplates: JSON.parse(localStorage.getItem('tonal-field-cue-motion') || '[]'), gestureCalibration: JSON.parse(localStorage.getItem('tonal-field-cue') || 'null'), selectedDescriptors: new Set(JSON.parse(localStorage.getItem('tonal-field-descriptors') || '[]')) };
 const ctx = el.canvas.getContext('2d');
 const gestureCtx = el.gestureCanvas.getContext('2d');
 let lastDescriptorInterval = null;
+const CUE_ARM_MS = 320;
+const CUE_CAPTURE_MS = 1100;
+const CUE_START_DISTANCE = .048;
+const CUE_MATCH_THRESHOLD = .245;
 
 function noteFrequency(midi) { return 440 * Math.pow(2, (midi - 69) / 12); }
 function selectedMidi() { return 12 * (state.octave + 1) + state.key; }
@@ -139,7 +143,7 @@ function stopListening() {
 
 async function cueDrone() {
   setupAudio();
-  await state.audio.resume();
+  if (state.audio.state !== 'running') state.audio.resume().catch(() => {});
   const now = state.audio.currentTime;
   const targetLevel = (state.volume / 100) * .18;
   if (!state.isDrone) {
@@ -147,12 +151,13 @@ async function cueDrone() {
     buildDrone();
     state.droneGain.gain.cancelScheduledValues(now);
     state.droneGain.gain.setValueAtTime(.0001, now);
-    state.droneGain.gain.exponentialRampToValueAtTime(Math.max(.0002, targetLevel), now + .46);
+    state.droneGain.gain.exponentialRampToValueAtTime(Math.max(.0002, targetLevel * .62), now + .055);
+    state.droneGain.gain.exponentialRampToValueAtTime(Math.max(.0002, targetLevel), now + .22);
   } else {
     state.droneGain.gain.cancelScheduledValues(now);
     state.droneGain.gain.setValueAtTime(Math.max(.0001, state.droneGain.gain.value), now);
-    state.droneGain.gain.linearRampToValueAtTime(Math.max(.0001, targetLevel * .38), now + .07);
-    state.droneGain.gain.exponentialRampToValueAtTime(Math.max(.0002, targetLevel), now + .42);
+    state.droneGain.gain.linearRampToValueAtTime(Math.max(.0001, targetLevel * .82), now + .03);
+    state.droneGain.gain.exponentialRampToValueAtTime(Math.max(.0002, targetLevel), now + .16);
   }
   updateControls();
 }
@@ -160,6 +165,8 @@ async function cueDrone() {
 async function enterCamera() {
   if (state.isCamera) return;
   try {
+    setupAudio();
+    if (state.audio.state !== 'running') state.audio.resume().catch(() => {});
     const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false });
     state.cameraStream = stream;
     el.camera.srcObject = stream;
@@ -186,6 +193,7 @@ function exitCamera() {
   state.cueRecording = null;
   document.body.classList.remove('is-recording');
   clearMotionBuffer();
+  resetCueGate();
   clearGestureCanvas();
   document.body.classList.remove('camera-active');
   setControlsCollapsed(true);
@@ -272,7 +280,7 @@ function drawGestureCue(pose, progress, mode) {
   const x = (1 - pose.center.x) * window.innerWidth;
   const y = pose.center.y * window.innerHeight;
   const radius = Math.max(42, Math.min(92, pose.width * window.innerWidth * .76));
-  const color = mode === 'calibrate' ? '196, 215, 162' : mode === 'record' ? '232, 202, 123' : state.isCueMode ? '232, 202, 123' : '235, 163, 179';
+  const color = mode === 'calibrate' ? '196, 215, 162' : mode === 'record' || mode === 'arm' ? '232, 202, 123' : state.isCueMode ? '232, 202, 123' : '235, 163, 179';
   gestureCtx.lineCap = 'round';
   gestureCtx.beginPath();
   gestureCtx.arc(x, y, radius + 11, 0, Math.PI * 2);
@@ -292,7 +300,7 @@ function drawGestureCue(pose, progress, mode) {
   gestureCtx.shadowColor = `rgb(${color})`;
   gestureCtx.stroke();
   gestureCtx.shadowBlur = 0;
-  const countdown = Math.max(1, 3 - Math.floor(progress * 3));
+  const countdown = mode === 'arm' ? (progress >= 1 ? '✓' : '·') : Math.max(1, 3 - Math.floor(progress * 3));
   gestureCtx.fillStyle = 'rgba(255, 249, 238, .96)';
   gestureCtx.font = '500 22px Inter, system-ui, sans-serif';
   gestureCtx.textAlign = 'center';
@@ -300,7 +308,7 @@ function drawGestureCue(pose, progress, mode) {
   gestureCtx.fillText(String(countdown), x, y - 5);
   gestureCtx.fillStyle = `rgba(${color}, .88)`;
   gestureCtx.font = '500 9px Inter, system-ui, sans-serif';
-  gestureCtx.fillText(mode === 'calibrate' ? 'SAVE CUE' : mode === 'record' ? 'RECORD CUE' : state.isCueMode ? 'EXIT CUE MODE' : 'ENTER CUE MODE', x, y + 17);
+  gestureCtx.fillText(mode === 'calibrate' ? 'SAVE CUE' : mode === 'record' ? 'RECORD CUE' : mode === 'arm' ? (progress >= 1 ? 'ARMED' : 'ARMING') : state.isCueMode ? 'EXIT CUE MODE' : 'ENTER CUE MODE', x, y + 17);
 }
 
 function updateGestureState(text) {
@@ -311,9 +319,68 @@ function clearMotionBuffer() {
   state.motionBuffer = [];
 }
 
+function resetCueGate() {
+  state.cueGate = null;
+}
+
+function mirroredPoint(pose, at = performance.now()) {
+  return { x: 1 - pose.center.x, y: pose.center.y, at };
+}
+
+function isReadyHandSteady(pose, reference) {
+  return pointDistance(pose.center, reference.center) < .022 && dot(pose.normal, reference.normal) > .42;
+}
+
+function beginsCueMotion(pose, reference) {
+  return pointDistance(pose.center, reference.center) > Math.max(CUE_START_DISTANCE, pose.width * .42);
+}
+
+function advanceCueGate(pose, copy) {
+  const now = performance.now();
+  if (isClosedFist(pose)) {
+    resetCueGate();
+    updateGestureState(copy.open || 'open your hand to arm');
+    clearGestureCanvas();
+    return null;
+  }
+  if (!state.cueGate) {
+    state.cueGate = { phase: 'settling', pose, startedAt: now };
+    updateGestureState(copy.settle);
+    drawGestureCue(pose, 0, 'arm');
+    return null;
+  }
+  const gate = state.cueGate;
+  if (gate.phase === 'settling') {
+    if (!isReadyHandSteady(pose, gate.pose)) {
+      gate.pose = pose;
+      gate.startedAt = now;
+      updateGestureState(copy.settle);
+      drawGestureCue(pose, 0, 'arm');
+      return null;
+    }
+    const progress = Math.min(1, (now - gate.startedAt) / CUE_ARM_MS);
+    drawGestureCue(pose, progress, 'arm');
+    updateGestureState(progress >= 1 ? copy.armed : copy.settle);
+    if (progress >= 1) {
+      gate.phase = 'armed';
+      gate.armedPose = pose;
+    }
+    return null;
+  }
+  if (!beginsCueMotion(pose, gate.armedPose)) {
+    drawGestureCue(pose, 1, 'arm');
+    updateGestureState(copy.armed);
+    return null;
+  }
+  const start = mirroredPoint(gate.armedPose, now - 50);
+  const end = mirroredPoint(pose, now);
+  resetCueGate();
+  return [start, end];
+}
+
 function recordMotionPoint(pose) {
   const now = performance.now();
-  state.motionBuffer.push({ x: 1 - pose.center.x, y: pose.center.y, at: now });
+  state.motionBuffer.push(mirroredPoint(pose, now));
   state.motionBuffer = state.motionBuffer.filter(point => now - point.at < 2200);
 }
 
@@ -400,7 +467,7 @@ function saveCueTemplate(points) {
   return true;
 }
 
-async function beginCueMotionRecording() {
+async function beginCueMotionRecording({ restart = false } = {}) {
   if (!state.isCamera) await enterCamera();
   if (!state.isCamera) return;
   if (!state.isCueMode) {
@@ -409,7 +476,7 @@ async function beginCueMotionRecording() {
     state.gestureAwaitRelease = false;
     updateControls();
   }
-  if (state.cueTemplates.length >= 3) {
+  if (restart || state.cueTemplates.length >= 3) {
     state.cueTemplates = [];
     localStorage.removeItem('tonal-field-cue-motion');
     updateCueRecordButton();
@@ -419,6 +486,7 @@ async function beginCueMotionRecording() {
   state.gestureHold = null;
   state.gestureAwaitRelease = false;
   clearMotionBuffer();
+  resetCueGate();
   setControlsCollapsed(true);
   updateGestureState(`cue sample ${state.cueTemplates.length + 1}/3 · show your right hand`);
 }
@@ -438,24 +506,58 @@ function captureCueMotion(pose) {
     drawGestureCue(pose, progress, 'record');
     updateGestureState(`cue sample ${state.cueTemplates.length + 1}/3 · ${Math.max(1, 2 - Math.floor(progress * 2))}`);
     if (progress >= 1) {
-      recording.phase = 'capture';
-      recording.startedAt = now;
+      recording.phase = 'ready';
+      recording.startedAt = null;
       recording.points = [];
       clearMotionBuffer();
-      updateGestureState('now · conduct the cue');
+      resetCueGate();
+      updateGestureState('settle your open hand to arm');
     }
     return true;
   }
-  const point = { x: 1 - pose.center.x, y: pose.center.y, at: now };
+  if (recording.phase === 'interlude') {
+    if (now - recording.startedAt < 800) return true;
+    recording.phase = 'waiting';
+    recording.startedAt = null;
+    updateGestureState(`cue sample ${state.cueTemplates.length + 1}/3 · show your right hand`);
+    return true;
+  }
+  if (recording.phase === 'ready') {
+    const opening = advanceCueGate(pose, { open: 'open your hand to begin', settle: 'settle your open hand to arm', armed: 'armed · conduct the cue' });
+    if (!opening) return true;
+    recording.phase = 'capture';
+    recording.startedAt = now;
+    recording.points = opening;
+    state.motionBuffer = recording.points;
+    updateGestureState('recording your cue');
+    drawMotionTrail();
+    return true;
+  }
+  const point = mirroredPoint(pose, now);
   recording.points.push(point);
   state.motionBuffer = recording.points;
   drawMotionTrail();
-  if (now - recording.startedAt >= 1500) {
+  if (now - recording.startedAt >= CUE_CAPTURE_MS) {
     const saved = saveCueTemplate(recording.points);
+    clearMotionBuffer();
+    if (!saved) {
+      state.cueRecording = { phase: 'waiting', startedAt: null, points: [] };
+      resetCueGate();
+      updateGestureState('not enough motion · try this sample again');
+      return true;
+    }
+    if (state.cueTemplates.length < 3) {
+      recording.phase = 'interlude';
+      recording.startedAt = now;
+      recording.points = [];
+      resetCueGate();
+      updateGestureState(`sample saved · preparing ${state.cueTemplates.length + 1}/3`);
+      return true;
+    }
     state.cueRecording = null;
     document.body.classList.remove('is-recording');
-    clearMotionBuffer();
-    updateGestureState(saved ? (state.cueTemplates.length >= 3 ? 'cue vocabulary saved · try it' : `sample saved · ${3 - state.cueTemplates.length} more`) : 'not enough motion · try again');
+    resetCueGate();
+    updateGestureState('cue vocabulary saved · try it');
   }
   return true;
 }
@@ -469,15 +571,29 @@ async function evaluateCueMotion(pose) {
   }
   const now = performance.now();
   if (now < state.cueCooldownUntil) return;
-  recordMotionPoint(pose);
+  if (!state.motionBuffer.length) {
+    const opening = advanceCueGate(pose, { open: 'open your hand to begin', settle: 'settle your open hand to arm', armed: 'armed · begin your cue' });
+    if (!opening) return;
+    state.motionBuffer = opening;
+    updateGestureState('cue in motion');
+  } else {
+    recordMotionPoint(pose);
+  }
   const latest = state.motionBuffer.at(-1);
+  const maximumDuration = Math.max(...state.cueTemplates.map(template => template.duration)) * 1.48;
+  if (latest.at - state.motionBuffer[0].at > maximumDuration) {
+    clearMotionBuffer();
+    resetCueGate();
+    updateGestureState('cue reset · settle your hand to arm');
+    return;
+  }
   const bestScore = Math.min(...state.cueTemplates.map(template => {
     const points = state.motionBuffer.filter(point => latest.at - point.at <= template.duration * 1.25);
     const duration = points.at(-1).at - points[0].at;
     if (points.length < 8 || duration < template.duration * .64 || duration > template.duration * 1.48) return Infinity;
     return cueTemplateScore(template, points);
   }));
-  if (bestScore < .27) {
+  if (bestScore < CUE_MATCH_THRESHOLD) {
     state.cueCooldownUntil = now + 1600;
     clearMotionBuffer();
     updateGestureState('cue received · drone blooms');
@@ -501,6 +617,7 @@ function saveCalibration(pose) {
   state.gestureAwaitRelease = true;
   state.cueRecording = null;
   document.body.classList.remove('is-recording');
+  resetCueGate();
   resetGestureHold();
   updateGestureState('cue saved · release your hand');
 }
@@ -511,8 +628,10 @@ function toggleCueMode() {
   state.activeCueHandLabel = enteringCueMode ? state.currentHandLabel : null;
   state.gestureAwaitRelease = true;
   state.cueRecording = null;
+  state.autoTeachOnRelease = enteringCueMode && state.cueTemplates.length < 3;
   document.body.classList.remove('is-recording');
   clearMotionBuffer();
+  resetCueGate();
   resetGestureHold();
   updateControls();
   updateGestureState(state.isCueMode ? 'cue mode · release your hand' : 'cue mode released · release your hand');
@@ -522,8 +641,13 @@ function evaluateGesture(pose) {
   const mode = state.isCalibrating ? 'calibrate' : 'cue';
   const candidate = isClosedFist(pose) && (state.isCalibrating || matchesCalibration(pose));
   if (!candidate) {
+    const shouldStartAutoTeach = state.gestureAwaitRelease && state.autoTeachOnRelease && state.isCueMode;
     if (state.gestureAwaitRelease) state.gestureAwaitRelease = false;
     resetGestureHold();
+    if (shouldStartAutoTeach) {
+      state.autoTeachOnRelease = false;
+      beginCueMotionRecording();
+    }
     return;
   }
   if (state.gestureAwaitRelease) return;
@@ -548,9 +672,11 @@ function onHandResults(results) {
   }
   const landmarks = allHands[activeIndex];
   if (!landmarks) {
+    const shouldStartAutoTeach = state.gestureAwaitRelease && state.autoTeachOnRelease && state.isCueMode;
     if (state.gestureAwaitRelease) state.gestureAwaitRelease = false;
+    let recordingInterrupted = false;
     if (state.cueRecording) {
-      if (state.cueRecording.phase === 'waiting') {
+      if (state.cueRecording.phase === 'waiting' || state.cueRecording.phase === 'interlude') {
         updateGestureState(`cue sample ${state.cueTemplates.length + 1}/3 · show your right hand`);
         return;
       }
@@ -558,11 +684,17 @@ function onHandResults(results) {
       if (performance.now() - state.cueRecording.missingSince < 500) return;
       state.cueRecording = null;
       document.body.classList.remove('is-recording');
+      resetCueGate();
+      recordingInterrupted = true;
     }
     state.smoothedPose = null;
     clearMotionBuffer();
     resetGestureHold();
-    updateGestureState('recording paused · show your hand and try again');
+    if (recordingInterrupted) updateGestureState('recording paused · show your hand and try again');
+    if (shouldStartAutoTeach) {
+      state.autoTeachOnRelease = false;
+      beginCueMotionRecording();
+    }
     return;
   }
   state.currentHandLabel = handLabels[activeIndex]?.label || null;

@@ -89,17 +89,17 @@ input[type="range"] { width: 100%; margin: 8px 0 5px; accent-color: var(--warm);
 .practice-note strong { color: #d7d0d9; font-weight: 500; }
 
 body.camera-active { background: #0b0a0d; }
-body.camera-active .camera-feed { opacity: 1; }
+body.camera-active .camera-feed { opacity: 1; transform: scaleX(-1); }
 body.camera-active .topbar { display: none; }
 body.camera-active .experience { position: fixed; inset: 0; z-index: 2; display: grid; grid-template-columns: 1fr; grid-template-rows: 1fr; padding: 44px clamp(24px, 5vw, 84px); background: radial-gradient(circle at center, rgba(11, 10, 13, .08) 0, rgba(8, 8, 13, .42) 64%, rgba(5, 5, 8, .72) 100%); }
 body.camera-active .ambient, body.camera-active .practice-copy { display: none; }
-body.camera-active .camera-exit { display: block; }
-body.camera-active .camera-controls-trigger { display: block; }
+body.camera-active .camera-exit { display: block; left: auto; right: clamp(24px, 5vw, 84px); }
+body.camera-active .camera-controls-trigger { display: block; left: clamp(24px, 5vw, 84px); right: auto; }
 body.camera-active .field-wrap { width: min(75vw, 690px); max-height: min(82vh, 690px); grid-column: 1; grid-row: 1; }
 body.camera-active .field-wrap::after { content: "CAMERA PRACTICE"; position: absolute; bottom: -4%; color: rgba(255,255,255,.64); font-size: 10px; letter-spacing: .16em; }
 body.camera-active .descriptor-stream { position: absolute; z-index: 4; left: clamp(24px, 5vw, 84px); bottom: 42px; width: min(300px, 36vw); }
 body.camera-active .lesson-card { position: absolute; z-index: 4; right: clamp(24px, 5vw, 84px); bottom: 42px; width: min(330px, 36vw); }
-body.camera-active .controls { top: 22px; right: clamp(24px, 5vw, 84px); background: rgba(12, 11, 15, .68); }
+body.camera-active .controls { top: 22px; right: auto; left: clamp(24px, 5vw, 84px); transform-origin: top left; background: rgba(12, 11, 15, .68); }
 body.camera-active .controls.is-collapsed { display: none; }
 body.camera-active .target-label, body.camera-active .pitch-readout, body.camera-active .pitch-detail { text-shadow: 0 2px 10px rgba(0,0,0,.72); }
 
@@ -132,7 +132,8 @@ dialog p { color: #c6c0ca; line-height: 1.65; }
   body.camera-active .descriptor-stream { left: 20px; bottom: 26px; width: min(270px, 66vw); text-align: left; }
   body.camera-active .lesson-card { display: none; }
   body.camera-active .controls { top: 54px; }
-  body.camera-active .camera-controls-trigger { top: 18px; right: 20px; }
+  body.camera-active .camera-controls-trigger { top: 18px; left: 20px; }
+  body.camera-active .camera-exit { right: 20px; }
 }
 
 @media (max-width: 500px) {

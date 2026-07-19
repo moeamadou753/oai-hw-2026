@@ -476,18 +476,29 @@ function loopMetrics(points) {
     winding += delta;
     previousAngle = angle;
   }
-  return { duration, width, height, pathLength, winding: Math.abs(winding), closure: Math.hypot(last.x - first.x, last.y - first.y) };
+  const head = points.slice(0, Math.min(4, points.length));
+  const tail = points.slice(-Math.min(4, points.length));
+  const startGrip = head.reduce((total, point) => total + point.grip, 0) / head.length;
+  const endGrip = tail.reduce((total, point) => total + point.grip, 0) / tail.length;
+  return { duration, width, height, pathLength, winding: Math.abs(winding), returnDistance: Math.hypot(last.x - first.x, last.y - first.y), startGrip, endGrip, gripGain: endGrip - startGrip };
+}
+
+function handGrip(pose) {
+  return pose.ratios.reduce((total, ratio) => total + Math.max(0, Math.min(1, (1.48 - ratio) / .5)), 0) / pose.ratios.length;
 }
 
 function evaluateReleaseLoop(pose) {
-  if (!state.isCueMode || !state.isDrone || state.cueRecording || performance.now() < state.stopCooldownUntil) return false;
+  if (!state.isCueMode || !state.isDrone || state.isCalibrating || state.cueRecording || performance.now() < state.stopCooldownUntil) return false;
   const now = performance.now();
-  state.stopBuffer.push(mirroredPoint(pose, now));
+  state.stopBuffer.push({ ...mirroredPoint(pose, now), grip: handGrip(pose) });
   state.stopBuffer = state.stopBuffer.filter(point => now - point.at < 1300);
   const metrics = loopMetrics(state.stopBuffer);
   if (!metrics) return false;
-  const isReleaseLoop = metrics.duration > 360 && metrics.duration < 1250 && metrics.width > .075 && metrics.height > .075 && metrics.pathLength > .28 && metrics.closure < .13 && metrics.winding > 4.1;
-  if (!isReleaseLoop) return false;
+  const closesIntoRelease = metrics.startGrip < .48 && metrics.endGrip > .62 && metrics.gripGain > .25;
+  const curvedMotion = metrics.width > .045 && metrics.height > .045 && metrics.pathLength > .18 && metrics.winding > 1.55;
+  const returningStroke = metrics.pathLength > .28 && metrics.returnDistance < .18;
+  const isReleaseGesture = metrics.duration > 280 && metrics.duration < 1250 && closesIntoRelease && (curvedMotion || returningStroke);
+  if (!isReleaseGesture) return false;
   state.stopCooldownUntil = now + 1200;
   clearMotionBuffer();
   resetCueGate();
@@ -820,7 +831,7 @@ function onHandResults(results) {
     return;
   }
   const isFist = isClosedFist(pose) && (state.isCalibrating || matchesCalibration(pose));
-  if (!isFist && evaluateReleaseLoop(pose)) return;
+  if (evaluateReleaseLoop(pose)) return;
   evaluateGesture(pose);
   if (!isFist) evaluateCueMotion(pose);
 }

@@ -8,17 +8,21 @@
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
+    <video id="camera-feed" class="camera-feed" autoplay muted playsinline aria-hidden="true"></video>
     <main class="app-shell">
       <header class="topbar">
         <a class="wordmark" href="#top" aria-label="Tonal Field home">tonal field<span>·</span></a>
         <div class="status" aria-live="polite"><i id="status-dot"></i><span id="status-text">DRONE STANDBY</span></div>
         <div class="topbar-actions">
+          <button id="camera-trigger" class="camera-button" type="button">enter camera</button>
           <button id="controls-trigger" class="ghost-button" type="button" aria-expanded="false" aria-controls="controls">tune field</button>
           <button id="about-trigger" class="ghost-button" type="button">about</button>
         </div>
       </header>
 
       <section class="experience" id="top" aria-label="Tonal practice space">
+        <button id="camera-exit" class="camera-exit" type="button">← field</button>
+        <button id="camera-controls-trigger" class="camera-controls-trigger" type="button" aria-expanded="false" aria-controls="controls">tune</button>
         <div class="ambient ambient-one"></div>
         <div class="ambient ambient-two"></div>
         <div class="practice-copy">
@@ -70,6 +74,10 @@
               <option value="voice" selected>voice</option>
               <option value="instrument">instrument</option>
             </select>
+          </div>
+          <div class="control-group wide-control">
+            <label for="sensitivity">listening sensitivity <output id="sensitivity-output">balanced</output></label>
+            <input id="sensitivity" type="range" min="0" max="100" value="56" />
           </div>
           <div class="control-group wide-control">
             <label for="warmth">drone character <output id="warmth-output">warm</output></label>

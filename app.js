@@ -19,11 +19,14 @@ const el = {
   canvas: document.getElementById('field'), orb: document.getElementById('orb-button'), orbCopy: document.getElementById('orb-copy'),
   key: document.getElementById('key-select'), octave: document.getElementById('octave-select'), warmth: document.getElementById('warmth'),
   warmthOutput: document.getElementById('warmth-output'), volume: document.getElementById('volume'), volumeOutput: document.getElementById('volume-output'),
+  sensitivity: document.getElementById('sensitivity'), sensitivityOutput: document.getElementById('sensitivity-output'),
   mic: document.getElementById('mic-button'), pitch: document.getElementById('pitch-readout'), pitchDetail: document.getElementById('pitch-detail'),
   descriptors: document.getElementById('descriptors'), target: document.getElementById('target-label'), status: document.querySelector('.status'),
   statusText: document.getElementById('status-text'), lessonText: document.getElementById('lesson-text'), lessonMeter: document.getElementById('lesson-meter-fill'),
   about: document.getElementById('about-dialog'), aboutTrigger: document.getElementById('about-trigger'), aboutClose: document.getElementById('about-close'),
-  controls: document.getElementById('controls'), controlsTrigger: document.getElementById('controls-trigger')
+  controls: document.getElementById('controls'), controlsTrigger: document.getElementById('controls-trigger'),
+  camera: document.getElementById('camera-feed'), cameraTrigger: document.getElementById('camera-trigger'), cameraExit: document.getElementById('camera-exit'),
+  cameraControlsTrigger: document.getElementById('camera-controls-trigger')
 };
 
 noteNames.forEach((name, index) => {
@@ -31,7 +34,7 @@ noteNames.forEach((name, index) => {
   el.key.add(option);
 });
 
-const state = { audio: null, droneGain: null, droneNodes: [], lfoNodes: [], isDrone: false, analyser: null, micStream: null, isListening: false, key: 0, octave: 3, warmth: 54, volume: 48, inputProfile: 'voice', detected: null, targetHistory: [], selectedDescriptors: new Set(JSON.parse(localStorage.getItem('tonal-field-descriptors') || '[]')) };
+const state = { audio: null, droneGain: null, droneNodes: [], lfoNodes: [], isDrone: false, analyser: null, micStream: null, cameraStream: null, isListening: false, isCamera: false, key: 0, octave: 3, warmth: 54, volume: 48, sensitivity: 56, inputProfile: 'voice', detected: null, targetHistory: [], selectedDescriptors: new Set(JSON.parse(localStorage.getItem('tonal-field-descriptors') || '[]')) };
 const ctx = el.canvas.getContext('2d');
 let lastDescriptorInterval = null;
 
@@ -131,12 +134,38 @@ function stopListening() {
   updateControls();
 }
 
+async function enterCamera() {
+  if (state.isCamera) return;
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false });
+    state.cameraStream = stream;
+    el.camera.srcObject = stream;
+    await el.camera.play();
+    state.isCamera = true;
+    document.body.classList.add('camera-active');
+    setControlsCollapsed(true);
+  } catch (error) {
+    el.lessonText.textContent = 'Camera access was not available. You can keep practicing in the tonal field.';
+    el.pitchDetail.textContent = 'camera permission needed';
+  }
+}
+
+function exitCamera() {
+  state.cameraStream?.getTracks().forEach(track => track.stop());
+  state.cameraStream = null;
+  el.camera.srcObject = null;
+  state.isCamera = false;
+  document.body.classList.remove('camera-active');
+  setControlsCollapsed(true);
+}
+
 function autoCorrelate(buffer, sampleRate) {
   let rms = 0;
   let peak = 0;
   for (let i = 0; i < buffer.length; i++) { rms += buffer[i] * buffer[i]; peak = Math.max(peak, Math.abs(buffer[i])); }
   rms = Math.sqrt(rms / buffer.length);
-  const profileGate = state.inputProfile === 'voice' ? .0028 : .0022;
+  const sensitivityScale = 1.35 - state.sensitivity * .008;
+  const profileGate = (state.inputProfile === 'voice' ? .0028 : .0022) * sensitivityScale;
   if (rms < profileGate || peak < .012) return null;
   const size = buffer.length;
   let start = 0; let end = size - 1;
@@ -205,6 +234,7 @@ function updateControls() {
   el.mic.classList.toggle('active', state.isListening); el.mic.textContent = state.isListening ? 'listening · stop' : 'enable listening';
   el.volumeOutput.value = `${state.volume}%`;
   el.warmthOutput.value = state.warmth < 35 ? 'pure' : state.warmth < 72 ? 'warm' : 'blooming';
+  el.sensitivityOutput.value = state.sensitivity < 35 ? 'focused' : state.sensitivity < 72 ? 'balanced' : 'open';
   el.target.textContent = state.isListening ? `LISTENING · FIND ${noteNames[state.key]}` : `TONIC · ${noteNames[state.key]}`;
 }
 
@@ -276,14 +306,24 @@ document.getElementById('input-profile').addEventListener('change', event => {
 });
 el.warmth.addEventListener('input', event => { state.warmth = Number(event.target.value); updateControls(); if (state.isDrone) updateDrone(); });
 el.volume.addEventListener('input', event => { state.volume = Number(event.target.value); updateControls(); if (state.isDrone) state.droneGain.gain.linearRampToValueAtTime((state.volume / 100) * .18, state.audio.currentTime + .08); });
+el.sensitivity.addEventListener('input', event => { state.sensitivity = Number(event.target.value); updateControls(); });
 el.aboutTrigger.addEventListener('click', () => el.about.showModal());
 el.aboutClose.addEventListener('click', () => el.about.close());
 el.about.addEventListener('click', event => { if (event.target === el.about) el.about.close(); });
-el.controlsTrigger.addEventListener('click', () => {
-  const collapsed = el.controls.classList.toggle('is-collapsed');
+function setControlsCollapsed(collapsed) {
+  el.controls.classList.toggle('is-collapsed', collapsed);
   el.controlsTrigger.setAttribute('aria-expanded', String(!collapsed));
+  el.cameraControlsTrigger.setAttribute('aria-expanded', String(!collapsed));
   el.controlsTrigger.textContent = collapsed ? 'tune field' : 'hide controls';
-});
+  el.cameraControlsTrigger.textContent = collapsed ? 'tune' : 'hide';
+}
+
+function toggleControls() { setControlsCollapsed(!el.controls.classList.contains('is-collapsed')); }
+
+el.controlsTrigger.addEventListener('click', toggleControls);
+el.cameraControlsTrigger.addEventListener('click', toggleControls);
+el.cameraTrigger.addEventListener('click', enterCamera);
+el.cameraExit.addEventListener('click', exitCamera);
 
 updateDescriptors(0); updateControls(); requestAnimationFrame(draw);
 setInterval(() => { readPitch(); updateLiveCopy(); }, 70);

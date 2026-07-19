@@ -612,7 +612,7 @@ async function beginCueMotionRecording({ restart = false } = {}) {
   clearMotionBuffer();
   resetCueGate();
   setControlsCollapsed(true);
-  updateGestureState(`cue sample ${state.cueTemplates.length + 1}/3 · show your right hand`);
+  updateGestureState(`cue sample ${state.cueTemplates.length + 1}/3 · show your cue hand`);
 }
 
 function captureCueMotion(pose) {
@@ -643,7 +643,7 @@ function captureCueMotion(pose) {
     if (now - recording.startedAt < 800) return true;
     recording.phase = 'waiting';
     recording.startedAt = null;
-    updateGestureState(`cue sample ${state.cueTemplates.length + 1}/3 · show your right hand`);
+    updateGestureState(`cue sample ${state.cueTemplates.length + 1}/3 · show your cue hand`);
     return true;
   }
   if (recording.phase === 'ready') {
@@ -794,16 +794,16 @@ function onHandResults(results) {
   let activeIndex = 0;
   if (state.isCueMode && state.activeCueHandLabel) {
     const matchedIndex = handLabels.findIndex(handedness => handedness.label === state.activeCueHandLabel);
-    if (matchedIndex >= 0) activeIndex = matchedIndex;
+    activeIndex = matchedIndex;
   }
-  const landmarks = allHands[activeIndex];
+  const landmarks = activeIndex >= 0 ? allHands[activeIndex] : null;
   if (!landmarks) {
     const shouldStartAutoTeach = state.gestureAwaitRelease && state.autoTeachOnRelease && state.isCueMode;
     if (state.gestureAwaitRelease) state.gestureAwaitRelease = false;
     let recordingInterrupted = false;
     if (state.cueRecording) {
       if (state.cueRecording.phase === 'waiting' || state.cueRecording.phase === 'interlude') {
-        updateGestureState(`cue sample ${state.cueTemplates.length + 1}/3 · show your right hand`);
+        updateGestureState(`cue sample ${state.cueTemplates.length + 1}/3 · show your cue hand`);
         return;
       }
       state.cueRecording.missingSince ||= performance.now();
@@ -850,9 +850,9 @@ function startHandTracking() {
   }
   if (!state.hands) {
     state.hands = new window.Hands({ locateFile: file => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}` });
-    state.hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: .66, minTrackingConfidence: .62 });
     state.hands.onResults(onHandResults);
   }
+  state.hands.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: .66, minTrackingConfidence: .62 });
   state.handLoopRunning = true;
   updateGestureState(state.isCueMode ? cuePrompt() : 'hold a fist to cue');
   handTrackingLoop();

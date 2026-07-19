@@ -28,7 +28,7 @@ const el = {
   camera: document.getElementById('camera-feed'), cameraTrigger: document.getElementById('camera-trigger'), cameraExit: document.getElementById('camera-exit'),
   cameraControlsTrigger: document.getElementById('camera-controls-trigger'), gestureCanvas: document.getElementById('gesture-canvas'),
   gestureState: document.getElementById('gesture-state'), calibrateGesture: document.getElementById('calibrate-gesture'),
-  recordCueMotion: document.getElementById('record-cue-motion')
+  recordCueMotion: document.getElementById('record-cue-motion'), microphone: document.getElementById('microphone-select')
 };
 
 noteNames.forEach((name, index) => {
@@ -36,7 +36,7 @@ noteNames.forEach((name, index) => {
   el.key.add(option);
 });
 
-const state = { audio: null, droneGain: null, droneNodes: [], lfoNodes: [], isDrone: false, analyser: null, micStream: null, cameraStream: null, hands: null, handLoopRunning: false, isListening: false, isCamera: false, isCueMode: false, isCalibrating: false, cueRecording: null, cueGate: null, autoTeachOnRelease: false, key: 0, octave: 3, warmth: 54, volume: 48, sensitivity: 56, inputProfile: 'voice', detected: null, targetHistory: [], gestureHold: null, smoothedPose: null, gestureAwaitRelease: false, motionBuffer: [], cueCooldownUntil: 0, currentHandLabel: null, activeCueHandLabel: null, cueTemplates: JSON.parse(localStorage.getItem('tonal-field-cue-motion') || '[]'), gestureCalibration: JSON.parse(localStorage.getItem('tonal-field-cue') || 'null'), selectedDescriptors: new Set(JSON.parse(localStorage.getItem('tonal-field-descriptors') || '[]')) };
+const state = { audio: null, droneGain: null, droneNodes: [], lfoNodes: [], isDrone: false, analyser: null, micStream: null, micSource: null, microphoneId: localStorage.getItem('tonal-field-microphone') || 'default', cameraStream: null, hands: null, handLoopRunning: false, isListening: false, isCamera: false, isCueMode: false, isCalibrating: false, cueRecording: null, cueGate: null, autoTeachOnRelease: false, key: 0, octave: 3, warmth: 54, volume: 48, sensitivity: 56, inputProfile: 'voice', detected: null, targetHistory: [], gestureHold: null, smoothedPose: null, gestureAwaitRelease: false, motionBuffer: [], stopBuffer: [], cueCooldownUntil: 0, stopCooldownUntil: 0, currentHandLabel: null, activeCueHandLabel: null, cueTemplates: JSON.parse(localStorage.getItem('tonal-field-cue-motion') || '[]'), gestureCalibration: JSON.parse(localStorage.getItem('tonal-field-cue') || 'null'), selectedDescriptors: new Set(JSON.parse(localStorage.getItem('tonal-field-descriptors') || '[]')) };
 const ctx = el.canvas.getContext('2d');
 const gestureCtx = el.gestureCanvas.getContext('2d');
 let lastDescriptorInterval = null;
@@ -63,6 +63,22 @@ function stopDroneNodes() {
   state.droneNodes.forEach(node => { try { node.stop(); } catch {} });
   state.lfoNodes.forEach(node => { try { node.stop(); } catch {} });
   state.droneNodes = []; state.lfoNodes = [];
+}
+
+function clearStopBuffer() {
+  state.stopBuffer = [];
+}
+
+function releaseDrone() {
+  if (!state.isDrone || !state.audio || !state.droneGain) return;
+  const now = state.audio.currentTime;
+  state.droneGain.gain.cancelScheduledValues(now);
+  state.droneGain.gain.setValueAtTime(Math.max(.0001, state.droneGain.gain.value), now);
+  state.droneGain.gain.exponentialRampToValueAtTime(.0001, now + .32);
+  state.isDrone = false;
+  clearStopBuffer();
+  setTimeout(stopDroneNodes, 390);
+  updateControls();
 }
 
 function buildDrone() {
@@ -107,6 +123,7 @@ async function toggleDrone() {
     state.droneGain.gain.cancelScheduledValues(state.audio.currentTime);
     state.droneGain.gain.linearRampToValueAtTime(.0001, state.audio.currentTime + .7);
     setTimeout(stopDroneNodes, 850);
+    clearStopBuffer();
   }
   updateControls();
 }
@@ -117,27 +134,74 @@ function updateDrone() {
   buildDrone();
 }
 
-async function startListening() {
-  if (state.isListening) return stopListening();
+function microphoneConstraints() {
+  const deviceId = state.microphoneId === 'default' ? undefined : { exact: state.microphoneId };
+  return { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1, ...(deviceId ? { deviceId } : {}) };
+}
+
+async function refreshMicrophones() {
+  if (!navigator.mediaDevices?.enumerateDevices) return;
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 } });
-    setupAudio();
+    const devices = (await navigator.mediaDevices.enumerateDevices()).filter(device => device.kind === 'audioinput');
+    const currentValue = state.microphoneId;
+    el.microphone.replaceChildren(new Option('system default', 'default'));
+    devices.filter(device => device.deviceId !== 'default').forEach((device, index) => {
+      el.microphone.add(new Option(device.label || `microphone ${index + 1}`, device.deviceId));
+    });
+    const selectedIsAvailable = [...el.microphone.options].some(option => option.value === currentValue);
+    if (!selectedIsAvailable) state.microphoneId = 'default';
+    el.microphone.value = state.microphoneId;
+  } catch {}
+}
+
+async function connectMicrophone() {
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: microphoneConstraints() });
+  setupAudio();
+  if (!state.analyser) {
     state.analyser = state.audio.createAnalyser();
     state.analyser.fftSize = 2048;
     state.analyser.smoothingTimeConstant = .2;
-    state.audio.createMediaStreamSource(stream).connect(state.analyser);
-    state.micStream = stream;
-    state.isListening = true;
+  }
+  state.micSource?.disconnect();
+  state.micStream?.getTracks().forEach(track => track.stop());
+  state.micSource = state.audio.createMediaStreamSource(stream);
+  state.micSource.connect(state.analyser);
+  state.micStream = stream;
+  state.isListening = true;
+  await refreshMicrophones();
+}
+
+async function startListening() {
+  if (state.isListening) return stopListening();
+  try {
+    await connectMicrophone();
     updateControls();
   } catch (error) {
-    el.lessonText.textContent = 'Microphone access was not available. You can still explore the drone.';
+    el.lessonText.textContent = 'That microphone was not available. Choose another input or check browser permission.';
     el.pitchDetail.textContent = 'microphone permission needed';
   }
 }
 
+async function selectMicrophone() {
+  state.microphoneId = el.microphone.value;
+  localStorage.setItem('tonal-field-microphone', state.microphoneId);
+  if (!state.isListening) {
+    el.pitchDetail.textContent = state.microphoneId === 'default' ? 'system microphone selected' : 'microphone selected · enable listening';
+    return;
+  }
+  try {
+    await connectMicrophone();
+    el.pitchDetail.textContent = 'microphone switched';
+    updateControls();
+  } catch (error) {
+    el.pitchDetail.textContent = 'could not switch microphone';
+  }
+}
+
 function stopListening() {
+  state.micSource?.disconnect();
   state.micStream?.getTracks().forEach(track => track.stop());
-  state.micStream = null; state.analyser = null; state.isListening = false; state.detected = null;
+  state.micSource = null; state.micStream = null; state.analyser = null; state.isListening = false; state.detected = null;
   updateControls();
 }
 
@@ -147,6 +211,7 @@ async function cueDrone() {
   const now = state.audio.currentTime;
   const targetLevel = (state.volume / 100) * .18;
   if (!state.isDrone) {
+    clearStopBuffer();
     state.isDrone = true;
     buildDrone();
     state.droneGain.gain.cancelScheduledValues(now);
@@ -193,6 +258,7 @@ function exitCamera() {
   state.cueRecording = null;
   document.body.classList.remove('is-recording');
   clearMotionBuffer();
+  clearStopBuffer();
   resetCueGate();
   clearGestureCanvas();
   document.body.classList.remove('camera-active');
@@ -384,6 +450,53 @@ function recordMotionPoint(pose) {
   state.motionBuffer = state.motionBuffer.filter(point => now - point.at < 2200);
 }
 
+function loopMetrics(points) {
+  if (points.length < 12) return null;
+  const first = points[0];
+  const last = points.at(-1);
+  const duration = last.at - first.at;
+  const bounds = points.reduce((result, point) => ({
+    minX: Math.min(result.minX, point.x), maxX: Math.max(result.maxX, point.x),
+    minY: Math.min(result.minY, point.y), maxY: Math.max(result.maxY, point.y)
+  }), { minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity });
+  const width = bounds.maxX - bounds.minX;
+  const height = bounds.maxY - bounds.minY;
+  const center = points.reduce((total, point) => ({ x: total.x + point.x, y: total.y + point.y }), { x: 0, y: 0 });
+  center.x /= points.length;
+  center.y /= points.length;
+  let pathLength = 0;
+  let winding = 0;
+  let previousAngle = Math.atan2(points[0].y - center.y, points[0].x - center.x);
+  for (let index = 1; index < points.length; index++) {
+    pathLength += Math.hypot(points[index].x - points[index - 1].x, points[index].y - points[index - 1].y);
+    const angle = Math.atan2(points[index].y - center.y, points[index].x - center.x);
+    let delta = angle - previousAngle;
+    while (delta > Math.PI) delta -= Math.PI * 2;
+    while (delta < -Math.PI) delta += Math.PI * 2;
+    winding += delta;
+    previousAngle = angle;
+  }
+  return { duration, width, height, pathLength, winding: Math.abs(winding), closure: Math.hypot(last.x - first.x, last.y - first.y) };
+}
+
+function evaluateReleaseLoop(pose) {
+  if (!state.isCueMode || !state.isDrone || state.cueRecording || performance.now() < state.stopCooldownUntil) return false;
+  const now = performance.now();
+  state.stopBuffer.push(mirroredPoint(pose, now));
+  state.stopBuffer = state.stopBuffer.filter(point => now - point.at < 1300);
+  const metrics = loopMetrics(state.stopBuffer);
+  if (!metrics) return false;
+  const isReleaseLoop = metrics.duration > 360 && metrics.duration < 1250 && metrics.width > .075 && metrics.height > .075 && metrics.pathLength > .28 && metrics.closure < .13 && metrics.winding > 4.1;
+  if (!isReleaseLoop) return false;
+  state.stopCooldownUntil = now + 1200;
+  clearMotionBuffer();
+  resetCueGate();
+  clearGestureCanvas();
+  updateGestureState('release received · field settles');
+  releaseDrone();
+  return true;
+}
+
 function drawMotionTrail() {
   resizeGestureCanvas();
   clearGestureCanvas();
@@ -450,7 +563,7 @@ function cueTemplateScore(template, points) {
 }
 
 function cuePrompt() {
-  return state.cueTemplates.length >= 3 ? 'follow your recorded cue · fist to exit' : 'record 3 cue motions in tune · fist to exit';
+  return state.cueTemplates.length >= 3 ? 'settle to arm · circle to release · fist exits mode' : 'record 3 cue motions in tune · fist exits mode';
 }
 
 function updateCueRecordButton() {
@@ -617,6 +730,7 @@ function saveCalibration(pose) {
   state.gestureAwaitRelease = true;
   state.cueRecording = null;
   document.body.classList.remove('is-recording');
+  clearStopBuffer();
   resetCueGate();
   resetGestureHold();
   updateGestureState('cue saved · release your hand');
@@ -631,6 +745,7 @@ function toggleCueMode() {
   state.autoTeachOnRelease = enteringCueMode && state.cueTemplates.length < 3;
   document.body.classList.remove('is-recording');
   clearMotionBuffer();
+  clearStopBuffer();
   resetCueGate();
   resetGestureHold();
   updateControls();
@@ -705,6 +820,7 @@ function onHandResults(results) {
     return;
   }
   const isFist = isClosedFist(pose) && (state.isCalibrating || matchesCalibration(pose));
+  if (!isFist && evaluateReleaseLoop(pose)) return;
   evaluateGesture(pose);
   if (!isFist) evaluateCueMotion(pose);
 }
@@ -887,6 +1003,7 @@ document.getElementById('input-profile').addEventListener('change', event => {
   state.inputProfile = event.target.value;
   el.pitchDetail.textContent = `${state.inputProfile} profile active`;
 });
+el.microphone.addEventListener('change', selectMicrophone);
 el.warmth.addEventListener('input', event => { state.warmth = Number(event.target.value); updateControls(); if (state.isDrone) updateDrone(); });
 el.volume.addEventListener('input', event => { state.volume = Number(event.target.value); updateControls(); if (state.isDrone) state.droneGain.gain.linearRampToValueAtTime((state.volume / 100) * .18, state.audio.currentTime + .08); });
 el.sensitivity.addEventListener('input', event => { state.sensitivity = Number(event.target.value); updateControls(); });
@@ -912,4 +1029,6 @@ el.recordCueMotion.addEventListener('click', beginCueMotionRecording);
 window.addEventListener('resize', clearGestureCanvas);
 
 updateDescriptors(0); updateCueRecordButton(); updateControls(); requestAnimationFrame(draw);
+refreshMicrophones();
+navigator.mediaDevices?.addEventListener?.('devicechange', refreshMicrophones);
 setInterval(() => { readPitch(); updateLiveCopy(); }, 70);

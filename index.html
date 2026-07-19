@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#080b16" />
     <title>Tonal Field</title>
-    <link rel="stylesheet" href="styles.css?v=personal-cue-v2" />
+    <link rel="stylesheet" href="styles.css?v=microphone-v5" />
   </head>
   <body>
     <video id="camera-feed" class="camera-feed" autoplay muted playsinline aria-hidden="true"></video>
@@ -77,6 +77,12 @@
               <option value="instrument">instrument</option>
             </select>
           </div>
+          <div class="control-group mic-source">
+            <label for="microphone-select">microphone</label>
+            <select id="microphone-select" aria-label="Microphone input">
+              <option value="default">system default</option>
+            </select>
+          </div>
           <div class="control-group wide-control">
             <label for="sensitivity">listening sensitivity <output id="sensitivity-output">balanced</output></label>
             <input id="sensitivity" type="range" min="0" max="100" value="56" />
@@ -106,6 +112,6 @@
     </dialog>
 
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
-    <script src="app.js?v=cue-flow-v3"></script>
+    <script src="app.js?v=microphone-v5"></script>
   </body>
 </html>

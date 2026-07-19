@@ -79,6 +79,7 @@ h2 { font-size: clamp(40px, 4vw, 62px); line-height: .96; }
 .controls { position: absolute; z-index: 5; top: 22px; right: clamp(20px, 8vw, 130px); width: min(850px, calc(100% - 40px)); min-height: 88px; padding: 17px 20px; border: 1px solid rgba(246, 241, 231, .14); border-radius: 4px; background: linear-gradient(100deg, rgba(20, 23, 30, .92), rgba(29, 26, 36, .82)); box-shadow: 0 18px 55px rgba(0, 0, 0, .28); backdrop-filter: blur(18px); display: grid; grid-template-columns: 96px 78px 80px 1fr 1fr 1fr auto; gap: 15px; align-items: end; transform-origin: top right; transition: opacity .2s ease, transform .25s ease; }
 .controls.is-collapsed { opacity: 0; pointer-events: none; transform: translateY(-10px) scale(.98); }
 .control-group { min-width: 0; }
+.mic-source { grid-column: span 2; min-width: 180px; }
 .control-group label { display: flex; justify-content: space-between; margin-bottom: 10px; color: var(--muted); font-size: 10px; letter-spacing: .12em; text-transform: uppercase; }
 output { color: #cac4ce; letter-spacing: .04em; }
 select { width: 100%; appearance: none; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; padding: 6px 22px 9px 0; color: var(--ink); background: transparent url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8'%3E%3Cpath d='M1 1l5 5 5-5' fill='none' stroke='%23c9c3d0'/%3E%3C/svg%3E") right 8px center / 12px no-repeat; }
@@ -134,6 +135,7 @@ dialog p { color: #c6c0ca; line-height: 1.65; }
   .lesson-card { justify-self: center; margin-top: 20px; margin-bottom: 0; text-align: left; }
   .controls { top: 18px; right: 20px; left: 20px; width: auto; grid-template-columns: 1fr 1fr; gap: 18px; }
   .wide-control { grid-column: span 1; }
+  .mic-source { grid-column: span 2; }
   .mic-button { grid-column: span 2; justify-self: start; }
   .gesture-button { grid-column: span 2; }
   .practice-note { display: block; padding: 0 20px 16px; color: var(--muted); font-size: 10px; line-height: 1.4; }
@@ -155,7 +157,7 @@ dialog p { color: #c6c0ca; line-height: 1.65; }
   .pitch-readout { bottom: 6%; }
   .pitch-detail { bottom: 1%; }
   .controls { grid-template-columns: 1fr; max-height: calc(100vh - 110px); overflow-y: auto; }
-  .wide-control, .mic-button { grid-column: auto; }
+  .wide-control, .mic-source, .mic-button { grid-column: auto; }
   .gesture-button { grid-column: auto; }
   .mic-button { width: 100%; }
   .camera-button { padding: 7px 10px; font-size: 10px; }

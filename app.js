@@ -35,7 +35,7 @@ noteNames.forEach((name, index) => {
   el.key.add(option);
 });
 
-const state = { audio: null, droneGain: null, droneNodes: [], lfoNodes: [], isDrone: false, analyser: null, micStream: null, cameraStream: null, hands: null, handLoopRunning: false, isListening: false, isCamera: false, isQueuing: false, isCalibrating: false, key: 0, octave: 3, warmth: 54, volume: 48, sensitivity: 56, inputProfile: 'voice', detected: null, targetHistory: [], gestureHold: null, gestureAwaitRelease: false, gestureCalibration: JSON.parse(localStorage.getItem('tonal-field-cue') || 'null'), selectedDescriptors: new Set(JSON.parse(localStorage.getItem('tonal-field-descriptors') || '[]')) };
+const state = { audio: null, droneGain: null, droneNodes: [], lfoNodes: [], isDrone: false, analyser: null, micStream: null, cameraStream: null, hands: null, handLoopRunning: false, isListening: false, isCamera: false, isCueMode: false, isCalibrating: false, key: 0, octave: 3, warmth: 54, volume: 48, sensitivity: 56, inputProfile: 'voice', detected: null, targetHistory: [], gestureHold: null, smoothedPose: null, gestureAwaitRelease: false, gestureCalibration: JSON.parse(localStorage.getItem('tonal-field-cue') || 'null'), selectedDescriptors: new Set(JSON.parse(localStorage.getItem('tonal-field-descriptors') || '[]')) };
 const ctx = el.canvas.getContext('2d');
 const gestureCtx = el.gestureCanvas.getContext('2d');
 let lastDescriptorInterval = null;
@@ -160,6 +160,7 @@ function exitCamera() {
   state.isCamera = false;
   state.handLoopRunning = false;
   state.gestureHold = null;
+  state.smoothedPose = null;
   state.gestureAwaitRelease = false;
   clearGestureCanvas();
   document.body.classList.remove('camera-active');
@@ -204,7 +205,22 @@ function matchesCalibration(pose) {
 }
 
 function isSteady(pose, reference) {
-  return pointDistance(pose.center, reference.center) < .07 && dot(pose.normal, reference.normal) > .48;
+  return pointDistance(pose.center, reference.center) < .11 && dot(pose.normal, reference.normal) > .35;
+}
+
+function blendPose(from, to, amount) {
+  const blendPoint = (a, b) => ({ x: a.x + (b.x - a.x) * amount, y: a.y + (b.y - a.y) * amount, z: a.z + (b.z - a.z) * amount });
+  return {
+    center: blendPoint(from.center, to.center),
+    width: from.width + (to.width - from.width) * amount,
+    ratios: from.ratios.map((ratio, index) => ratio + (to.ratios[index] - ratio) * amount),
+    normal: normalize(blendPoint(from.normal, to.normal))
+  };
+}
+
+function smoothPose(pose) {
+  state.smoothedPose = state.smoothedPose ? blendPose(state.smoothedPose, pose, .24) : pose;
+  return state.smoothedPose;
 }
 
 function clearGestureCanvas() {
@@ -228,8 +244,13 @@ function drawGestureCue(pose, progress, mode) {
   const x = (1 - pose.center.x) * window.innerWidth;
   const y = pose.center.y * window.innerHeight;
   const radius = Math.max(42, Math.min(92, pose.width * window.innerWidth * .76));
-  const color = mode === 'calibrate' ? '196, 215, 162' : state.isQueuing ? '232, 202, 123' : '235, 163, 179';
+  const color = mode === 'calibrate' ? '196, 215, 162' : state.isCueMode ? '232, 202, 123' : '235, 163, 179';
   gestureCtx.lineCap = 'round';
+  gestureCtx.beginPath();
+  gestureCtx.arc(x, y, radius + 11, 0, Math.PI * 2);
+  gestureCtx.strokeStyle = `rgba(${color}, .12)`;
+  gestureCtx.lineWidth = 1;
+  gestureCtx.stroke();
   gestureCtx.beginPath();
   gestureCtx.arc(x, y, radius, -Math.PI / 2, Math.PI * 1.5);
   gestureCtx.strokeStyle = `rgba(${color}, .24)`;
@@ -251,7 +272,7 @@ function drawGestureCue(pose, progress, mode) {
   gestureCtx.fillText(String(countdown), x, y - 5);
   gestureCtx.fillStyle = `rgba(${color}, .88)`;
   gestureCtx.font = '500 9px Inter, system-ui, sans-serif';
-  gestureCtx.fillText(mode === 'calibrate' ? 'SAVE CUE' : state.isQueuing ? 'EXIT QUEUE' : 'ENTER QUEUE', x, y + 17);
+  gestureCtx.fillText(mode === 'calibrate' ? 'SAVE CUE' : state.isCueMode ? 'EXIT CUE MODE' : 'ENTER CUE MODE', x, y + 17);
 }
 
 function updateGestureState(text) {
@@ -261,7 +282,7 @@ function updateGestureState(text) {
 function resetGestureHold() {
   state.gestureHold = null;
   clearGestureCanvas();
-  if (state.isCamera && !state.isCalibrating) updateGestureState(state.isQueuing ? 'hold a fist to exit queue' : 'hold a fist to cue');
+  if (state.isCamera && !state.isCalibrating) updateGestureState(state.isCueMode ? 'hold a fist to exit cue mode' : 'hold a fist to cue');
 }
 
 function saveCalibration(pose) {
@@ -273,12 +294,12 @@ function saveCalibration(pose) {
   updateGestureState('cue saved · release your hand');
 }
 
-function toggleQueuing() {
-  state.isQueuing = !state.isQueuing;
+function toggleCueMode() {
+  state.isCueMode = !state.isCueMode;
   state.gestureAwaitRelease = true;
   resetGestureHold();
   updateControls();
-  updateGestureState(state.isQueuing ? 'queuing · release your hand' : 'queue released · release your hand');
+  updateGestureState(state.isCueMode ? 'cue mode · release your hand' : 'cue mode released · release your hand');
 }
 
 function evaluateGesture(pose) {
@@ -292,11 +313,12 @@ function evaluateGesture(pose) {
   if (state.gestureAwaitRelease) return;
   const now = performance.now();
   if (!state.gestureHold || !isSteady(pose, state.gestureHold.pose)) state.gestureHold = { pose, startedAt: now };
+  else state.gestureHold.pose = blendPose(state.gestureHold.pose, pose, .07);
   const progress = Math.min(1, (now - state.gestureHold.startedAt) / 3000);
-  updateGestureState(state.isCalibrating ? 'hold steady to save your cue' : state.isQueuing ? 'hold steady to leave queue' : 'hold steady to enter queue');
+  updateGestureState(state.isCalibrating ? 'hold steady to save your cue' : state.isCueMode ? 'hold steady to leave cue mode' : 'hold steady to enter cue mode');
   drawGestureCue(pose, progress, mode);
   if (progress >= 1) {
-    if (state.isCalibrating) saveCalibration(pose); else toggleQueuing();
+    if (state.isCalibrating) saveCalibration(pose); else toggleCueMode();
   }
 }
 
@@ -304,10 +326,11 @@ function onHandResults(results) {
   const landmarks = results.multiHandLandmarks?.[0];
   if (!landmarks) {
     if (state.gestureAwaitRelease) state.gestureAwaitRelease = false;
+    state.smoothedPose = null;
     resetGestureHold();
     return;
   }
-  evaluateGesture(handPose(landmarks));
+  evaluateGesture(smoothPose(handPose(landmarks)));
 }
 
 async function handTrackingLoop() {
@@ -328,7 +351,7 @@ function startHandTracking() {
     state.hands.onResults(onHandResults);
   }
   state.handLoopRunning = true;
-  updateGestureState(state.isQueuing ? 'hold a fist to exit queue' : 'hold a fist to cue');
+  updateGestureState(state.isCueMode ? 'hold a fist to exit cue mode' : 'hold a fist to cue');
   handTrackingLoop();
 }
 
@@ -410,16 +433,16 @@ function updateDescriptors(interval) {
 
 function updateControls() {
   el.orb.classList.toggle('active', state.isDrone); el.orb.setAttribute('aria-pressed', state.isDrone);
-  el.orbCopy.innerHTML = state.isQueuing ? 'cue<br />ready' : state.isListening ? 'listen<br />within' : state.isDrone ? 'release<br />home' : 'hold<br />home';
+  el.orbCopy.innerHTML = state.isCueMode ? 'cue<br />ready' : state.isListening ? 'listen<br />within' : state.isDrone ? 'release<br />home' : 'hold<br />home';
   document.body.classList.toggle('is-listening', state.isListening);
-  document.body.classList.toggle('is-queuing', state.isQueuing);
+  document.body.classList.toggle('is-cue-mode', state.isCueMode);
   el.status.classList.toggle('active', state.isDrone || state.isListening);
   el.statusText.textContent = state.isListening ? 'FIELD LISTENING' : state.isDrone ? 'DRONE OPEN' : 'DRONE STANDBY';
   el.mic.classList.toggle('active', state.isListening); el.mic.textContent = state.isListening ? 'listening · stop' : 'enable listening';
   el.volumeOutput.value = `${state.volume}%`;
   el.warmthOutput.value = state.warmth < 35 ? 'pure' : state.warmth < 72 ? 'warm' : 'blooming';
   el.sensitivityOutput.value = state.sensitivity < 35 ? 'focused' : state.sensitivity < 72 ? 'balanced' : 'open';
-  el.target.textContent = state.isQueuing ? `QUEUING · ${noteNames[state.key]}` : state.isListening ? `LISTENING · FIND ${noteNames[state.key]}` : `TONIC · ${noteNames[state.key]}`;
+  el.target.textContent = state.isCueMode ? `CUE MODE · ${noteNames[state.key]}` : state.isListening ? `LISTENING · FIND ${noteNames[state.key]}` : `TONIC · ${noteNames[state.key]}`;
 }
 
 function draw(time) {

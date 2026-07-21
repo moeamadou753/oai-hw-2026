@@ -69,6 +69,7 @@ const state = {
   inputProfile: 'voice', detected: null, targetHistory: [],
   gestureHold: null, smoothedPose: null, gestureAwaitRelease: false,
   motionBuffer: [], stopBuffer: [], cueCooldownUntil: 0, stopCooldownUntil: 0,
+  stopArcCandidateAt: 0,
   gestureCommandAwaitReset: false, gestureCommandResetPose: null, gestureCommandResetSince: 0,
   gestureCommandMissingSince: 0,
   currentHandLabel: null, activeCueHandLabel: null, activeCueHandPosition: null,
@@ -120,6 +121,7 @@ function stopDroneNodes() {
 
 function clearStopBuffer() {
   state.stopBuffer = [];
+  state.stopArcCandidateAt = 0;
 }
 
 function releaseDrone() {
@@ -772,15 +774,9 @@ function completeGestureCommandReset() {
 
 function evaluateGestureCommandReset(pose) {
   if (!state.gestureCommandAwaitReset) return false;
-  const now = gestureNow();
+  // Quarantine the complete start stroke, including its visible tail. The
+  // recognizer re-arms after the brief hand-clear transition in onHandResults.
   state.gestureCommandResetPose = pose;
-  // The start cue's tail is protected briefly, then the same visible hand can
-  // flow directly into dynamics or release. Conductors should never have to
-  // remove their hand from the frame just to re-arm the recognizer.
-  if (now >= state.cueCooldownUntil) {
-    completeGestureCommandReset();
-    return false;
-  }
   updateGestureState('start received · release your hand');
   return true;
 }
@@ -894,7 +890,7 @@ function evaluateVolumeGesture(pose) {
   // relaxes a few pixels downward after its curl, but it has not actually
   // pressed the sound down.
   const lowerMotion = state.volumeLowerReady && openPressHand && motion.age >= 170
-    && motion.point.extension > 1.08
+    && motion.point.extension > 1.2
     && motion.deltaExtension > -.035
     && motion.deltaPalmMedium > .022
     && motion.rangeY > .025;
@@ -958,12 +954,14 @@ function loopMetrics(points) {
   const startGrip = head.reduce((total, point) => total + point.grip, 0) / head.length;
   const endGrip = tail.reduce((total, point) => total + point.grip, 0) / tail.length;
   const endsInFist = tail.some(point => point.isFist);
+  const minGrip = Math.min(...points.map(point => point.grip));
   const netWinding = Math.abs(winding);
   return {
     duration, width, height, pathLength, winding: netWinding, angularTravel,
     turnConsistency: netWinding / Math.max(angularTravel, .001),
     returnDistance: Math.hypot(last.x - first.x, last.y - first.y),
-    startGrip, endGrip, gripGain: endGrip - startGrip, endsInFist
+    startGrip, endGrip, minGrip, gripRange: endGrip - minGrip,
+    gripGain: endGrip - startGrip, endsInFist
   };
 }
 
@@ -975,17 +973,31 @@ function evaluateReleaseLoop(pose) {
   if (!state.isCueMode || !state.isDrone || state.isCalibrating || state.cueRecording || gestureNow() < state.stopCooldownUntil) return false;
   const now = gestureNow();
   state.stopBuffer.push({ ...mirroredPoint(pose, now), grip: handGrip(pose), isFist: isClosedFist(pose) });
-  state.stopBuffer = state.stopBuffer.filter(point => now - point.at < 1300);
+  // Release circles sometimes blur at the fastest part of the stroke. Keep a
+  // longer semantic window so the returning fist can reconnect the path.
+  state.stopBuffer = state.stopBuffer.filter(point => now - point.at < 2800);
   const metrics = loopMetrics(state.stopBuffer);
   if (!metrics) return false;
-  const closesIntoRelease = metrics.startGrip < .68 && (metrics.endsInFist || (metrics.endGrip > .52 && metrics.gripGain > .16));
+  const closesIntoRelease = (metrics.startGrip < .68 && (metrics.endsInFist || (metrics.endGrip > .52 && metrics.gripGain > .16)))
+    || (metrics.endsInFist && metrics.minGrip < .62 && metrics.gripRange > .22);
   const aspectRatio = Math.min(metrics.width, metrics.height) / Math.max(metrics.width, metrics.height, .001);
   const movingStroke = metrics.width > .052 && metrics.height > .052 && metrics.pathLength > .22;
   const curvedMotion = metrics.winding > 3.8 && metrics.turnConsistency > .58 && aspectRatio > .4;
   const returningStroke = metrics.returnDistance < Math.max(.1, Math.max(metrics.width, metrics.height) * .82);
-  const isReleaseGesture = metrics.duration > 360 && metrics.duration < 1350
+  const releaseArc = metrics.duration > 420 && metrics.duration < 1250
+    && metrics.width > .09 && metrics.height > .15 && metrics.pathLength > .45
+    && metrics.winding > 3.35 && metrics.turnConsistency > .78 && aspectRatio > .32;
+  if (releaseArc) {
+    state.stopArcCandidateAt = now;
+    updateGestureState('release arc received · close your hand');
+  }
+  const arcClosesIntoFist = state.stopArcCandidateAt
+    && now - state.stopArcCandidateAt < 2300
+    && isClosedFist(pose);
+  if (state.stopArcCandidateAt && now - state.stopArcCandidateAt >= 2300) state.stopArcCandidateAt = 0;
+  const isReleaseGesture = metrics.duration > 420 && metrics.duration < 2700
     && closesIntoRelease && movingStroke && curvedMotion && returningStroke;
-  if (!isReleaseGesture) return false;
+  if (!isReleaseGesture && !arcClosesIntoFist) return false;
   state.stopCooldownUntil = now + 1200;
   clearMotionBuffer();
   resetCueGate();
@@ -1440,7 +1452,7 @@ function startHandTracking() {
     state.hands = new window.Hands({ locateFile: file => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}` });
     state.hands.onResults(onHandResults);
   }
-  state.hands.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: .58, minTrackingConfidence: .55 });
+  state.hands.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: .46, minTrackingConfidence: .48 });
   state.handLoopRunning = true;
   updateGestureState(state.isCueMode ? cuePrompt() : 'hold a fist to cue');
   handTrackingLoop();

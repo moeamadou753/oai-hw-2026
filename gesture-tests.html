@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#0b0c12" />
+    <title>Tonal Field · Gesture Regression</title>
+    <link rel="stylesheet" href="gesture-tests.css?v=1" />
+  </head>
+  <body>
+    <main class="test-shell">
+      <header class="test-header">
+        <div>
+          <p class="eyebrow">Tonal Field · development instrument</p>
+          <h1>Gesture regression</h1>
+          <p class="lede">Each fixture is passed through the production MediaPipe pipeline and gesture state machine in real time.</p>
+        </div>
+        <div class="suite-actions">
+          <button id="run-all" class="primary" type="button">Run all fixtures</button>
+          <button id="stop-run" type="button" disabled>Stop</button>
+        </div>
+      </header>
+
+      <section class="summary" aria-live="polite">
+        <div><strong id="passed-count">0</strong><span>passed</span></div>
+        <div><strong id="failed-count">0</strong><span>failed</span></div>
+        <div><strong id="pending-count">8</strong><span>not run</span></div>
+        <p id="suite-status">Ready. Tests run at natural speed so timing thresholds remain honest.</p>
+      </section>
+
+      <section class="workspace">
+        <div class="fixtures-panel">
+          <div class="section-heading">
+            <h2>Behavioral fixtures</h2>
+            <span>exact event order required</span>
+          </div>
+          <ol id="fixture-list" class="fixture-list"></ol>
+        </div>
+
+        <div class="run-panel">
+          <div class="stage-header">
+            <div>
+              <p id="current-label" class="eyebrow">No fixture selected</p>
+              <h2 id="current-title">Live pipeline preview</h2>
+            </div>
+            <span id="current-state" class="state-pill">idle</span>
+          </div>
+          <div class="stage">
+            <iframe id="fixture-frame" title="Gesture fixture running through Tonal Field" allow="autoplay"></iframe>
+            <div id="stage-empty" class="stage-empty">Choose a fixture or run the complete suite.</div>
+          </div>
+          <div class="event-console">
+            <div>
+              <span>expected</span>
+              <div id="expected-events" class="event-sequence"></div>
+            </div>
+            <div>
+              <span>observed</span>
+              <div id="observed-events" class="event-sequence"></div>
+            </div>
+            <ol id="event-log" class="event-log"></ol>
+          </div>
+        </div>
+      </section>
+    </main>
+    <script id="gesture-report" type="application/json">{}</script>
+    <script src="gesture-tests.js?v=4"></script>
+  </body>
+</html>

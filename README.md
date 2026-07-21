@@ -22,6 +22,14 @@ Open [http://localhost:4173](http://localhost:4173). Click **hold home** to star
 - A personal, persistent descriptor stream: select words that match how an interval lands for you.
 - An optional mirrored camera practice view with a three-second fist hold for Cue Mode. Record three examples of your own conducting cue; their normalized hand trajectories stay in local browser storage and can re-articulate the drone.
 
+### Gesture regression harness
+
+Serve the project normally, then open [http://localhost:4173/gesture-tests.html](http://localhost:4173/gesture-tests.html). The harness runs the recordings in `gesture-fixtures/` through the same MediaPipe input and gesture state machine used by the live camera.
+
+Each fixture filename describes its required semantic event sequence. A test passes only when the observed `start`, `raise`, `lower`, and `stop` events match that sequence exactly—missing, extra, and out-of-order commands all fail. Runs use video timestamps, begin only after the hand model is warm, isolate application state between fixtures, and report both FSM transitions and hand-detection coverage to distinguish tracking failures from recognition failures.
+
+Use **Run all fixtures** for the complete real-time suite or run one fixture while tuning a recognizer. The suite intentionally runs at natural speed because the interaction depends on conducting timing.
+
 ## Evaluation Criteria
 
 ### Technological Implementation

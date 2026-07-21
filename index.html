@@ -5,11 +5,22 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#080b16" />
     <title>Tonal Field</title>
-    <link rel="stylesheet" href="styles.css?v=cue-fsm-v11" />
+    <link rel="stylesheet" href="styles.css?v=gesture-harness-v32" />
   </head>
   <body>
     <video id="camera-feed" class="camera-feed" autoplay muted playsinline aria-hidden="true"></video>
     <canvas id="gesture-canvas" class="gesture-canvas" aria-hidden="true"></canvas>
+    <div id="volume-hud" class="volume-hud" aria-live="polite">
+      <div class="volume-hud-bloom">
+        <svg viewBox="0 0 28 28" aria-hidden="true">
+          <path d="M5 11h5l6-5v16l-6-5H5z"></path>
+          <path d="M20 10c1.2 1.1 1.8 2.4 1.8 4s-.6 2.9-1.8 4"></path>
+        </svg>
+        <strong id="volume-hud-value">48</strong>
+      </div>
+      <span class="volume-hud-label">drone level</span>
+      <i class="volume-hud-track"><i id="volume-hud-meter"></i></i>
+    </div>
     <main class="app-shell">
       <header class="topbar">
         <a class="wordmark" href="#top" aria-label="Tonal Field home">tonal field<span>·</span></a>
@@ -112,6 +123,6 @@
     </dialog>
 
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
-    <script src="app.js?v=cue-fsm-v11"></script>
+    <script src="app.js?v=gesture-harness-v32"></script>
   </body>
 </html>

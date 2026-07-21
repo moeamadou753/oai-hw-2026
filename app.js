@@ -15,6 +15,19 @@ const descriptorMap = {
   11: ['yearning', 'magnetic', 'almost home']
 };
 
+const gestureTestParams = new URLSearchParams(window.location.search);
+const gestureTest = {
+  enabled: gestureTestParams.has('gestureFixture'),
+  fixture: gestureTestParams.get('gestureFixture'),
+  runId: gestureTestParams.get('gestureRun') || 'manual',
+  warmingUp: false,
+  warmupResolve: null,
+  processedFrames: 0,
+  handFrames: 0,
+  lastFrameTime: -1,
+  lastReportedState: null
+};
+
 const el = {
   canvas: document.getElementById('field'), orb: document.getElementById('orb-button'), orbCopy: document.getElementById('orb-copy'),
   key: document.getElementById('key-select'), octave: document.getElementById('octave-select'), warmth: document.getElementById('warmth'),
@@ -28,7 +41,9 @@ const el = {
   camera: document.getElementById('camera-feed'), cameraTrigger: document.getElementById('camera-trigger'), cameraExit: document.getElementById('camera-exit'),
   cameraControlsTrigger: document.getElementById('camera-controls-trigger'), gestureCanvas: document.getElementById('gesture-canvas'),
   gestureState: document.getElementById('gesture-state'), calibrateGesture: document.getElementById('calibrate-gesture'),
-  recordCueMotion: document.getElementById('record-cue-motion'), microphone: document.getElementById('microphone-select')
+  recordCueMotion: document.getElementById('record-cue-motion'), microphone: document.getElementById('microphone-select'),
+  volumeHud: document.getElementById('volume-hud'), volumeHudValue: document.getElementById('volume-hud-value'),
+  volumeHudMeter: document.getElementById('volume-hud-meter')
 };
 
 noteNames.forEach((name, index) => {
@@ -36,7 +51,31 @@ noteNames.forEach((name, index) => {
   el.key.add(option);
 });
 
-const state = { audio: null, droneGain: null, droneNodes: [], lfoNodes: [], isDrone: false, analyser: null, micStream: null, micSource: null, microphoneId: localStorage.getItem('tonal-field-microphone') || 'default', cameraStream: null, hands: null, handLoopRunning: false, isListening: false, isCamera: false, isCueMode: false, isCalibrating: false, cueRecording: null, cueGate: null, cuePhase: 'idle', cueAnchor: null, cueStartedAt: 0, cueStillSince: 0, autoTeachOnRelease: false, key: 0, octave: 3, warmth: 54, volume: 48, sensitivity: 56, inputProfile: 'voice', detected: null, targetHistory: [], gestureHold: null, smoothedPose: null, gestureAwaitRelease: false, motionBuffer: [], stopBuffer: [], cueCooldownUntil: 0, stopCooldownUntil: 0, currentHandLabel: null, activeCueHandLabel: null, activeCueHandPosition: null, cueTemplates: JSON.parse(localStorage.getItem('tonal-field-cue-motion') || '[]'), gestureCalibration: JSON.parse(localStorage.getItem('tonal-field-cue') || 'null'), selectedDescriptors: new Set(JSON.parse(localStorage.getItem('tonal-field-descriptors') || '[]')) };
+const state = {
+  audio: null, droneGain: null, droneNodes: [], lfoNodes: [], isDrone: false,
+  analyser: null, micStream: null, micSource: null,
+  microphoneId: localStorage.getItem('tonal-field-microphone') || 'default',
+  cameraStream: null, hands: null, handLoopRunning: false,
+  isListening: false, isCamera: false, isCueMode: false, isCalibrating: false,
+  cueRecording: null, cueGate: null, cuePhase: 'idle', cueAnchor: null,
+  cueStartedAt: 0, cueStillSince: 0, autoTeachOnRelease: false,
+  volumeMotionBuffer: [], volumeGestureLastY: 0, volumeGestureLastPalmY: 0,
+  volumeGestureStartedAt: 0,
+  volumeGestureLastMatchAt: 0, volumeGestureLastPulseAt: 0,
+  volumeRaiseReady: false, volumeLowerReady: false, volumeLowerPressing: false,
+  volumeIntentCandidate: null, volumeIntentSince: 0, volumeIntentLastEvidenceAt: 0,
+  volumeFeedbackStep: null, volumeHudTimer: null,
+  key: 0, octave: 3, warmth: 54, volume: 48, sensitivity: 56,
+  inputProfile: 'voice', detected: null, targetHistory: [],
+  gestureHold: null, smoothedPose: null, gestureAwaitRelease: false,
+  motionBuffer: [], stopBuffer: [], cueCooldownUntil: 0, stopCooldownUntil: 0,
+  gestureCommandAwaitReset: false, gestureCommandResetPose: null, gestureCommandResetSince: 0,
+  gestureCommandMissingSince: 0,
+  currentHandLabel: null, activeCueHandLabel: null, activeCueHandPosition: null,
+  cueTemplates: gestureTest.enabled ? [] : JSON.parse(localStorage.getItem('tonal-field-cue-motion') || '[]'),
+  gestureCalibration: gestureTest.enabled ? null : JSON.parse(localStorage.getItem('tonal-field-cue') || 'null'),
+  selectedDescriptors: new Set(JSON.parse(localStorage.getItem('tonal-field-descriptors') || '[]'))
+};
 const ctx = el.canvas.getContext('2d');
 const gestureCtx = el.gestureCanvas.getContext('2d');
 let lastDescriptorInterval = null;
@@ -44,12 +83,26 @@ const CUE_ARM_MS = 320;
 const CUE_CAPTURE_MS = 1100;
 const CUE_START_DISTANCE = .048;
 const CUE_MATCH_THRESHOLD = .245;
+const gestureCommandEvents = new Set(['start', 'raise', 'lower', 'stop']);
+
+function reportGestureTest(kind, detail = {}) {
+  if (!gestureTest.enabled || window.parent === window) return;
+  window.parent.postMessage({ source: 'tonal-field-gesture-test', runId: gestureTest.runId, kind, ...detail }, window.location.origin);
+}
+
+function emitGestureEvent(type, detail = {}) {
+  const event = { type, at: gestureNow(), ...detail };
+  window.dispatchEvent(new CustomEvent('tonal-field-gesture', { detail: event }));
+  if (gestureCommandEvents.has(type)) reportGestureTest('gesture-event', { event });
+}
 
 function noteFrequency(midi) { return 440 * Math.pow(2, (midi - 69) / 12); }
 function selectedMidi() { return 12 * (state.octave + 1) + state.key; }
 function midiFromFrequency(frequency) { return 69 + 12 * Math.log2(frequency / 440); }
 function centsOff(frequency, midi) { return Math.round(1200 * Math.log2(frequency / noteFrequency(midi))); }
 function cleanModulo(value, modulo) { return ((value % modulo) + modulo) % modulo; }
+function clamp(value, minimum, maximum) { return Math.min(maximum, Math.max(minimum, value)); }
+function gestureNow() { return gestureTest.enabled ? el.camera.currentTime * 1000 : performance.now(); }
 
 function setupAudio() {
   if (state.audio) return;
@@ -70,12 +123,27 @@ function clearStopBuffer() {
 }
 
 function releaseDrone() {
-  if (!state.isDrone || !state.audio || !state.droneGain) return;
+  if (!state.isDrone) return;
+  if (gestureTest.enabled) {
+    state.isDrone = false;
+    state.gestureCommandAwaitReset = false;
+    state.gestureCommandResetPose = null;
+    if (state.cuePhase === 'volume-up' || state.cuePhase === 'volume-down') state.cuePhase = state.isCueMode ? 'ready' : 'idle';
+    resetVolumeMotion();
+    clearStopBuffer();
+    updateControls();
+    return;
+  }
+  if (!state.audio || !state.droneGain) return;
   const now = state.audio.currentTime;
   state.droneGain.gain.cancelScheduledValues(now);
   state.droneGain.gain.setValueAtTime(Math.max(.0001, state.droneGain.gain.value), now);
   state.droneGain.gain.exponentialRampToValueAtTime(.0001, now + .32);
   state.isDrone = false;
+  state.gestureCommandAwaitReset = false;
+  state.gestureCommandResetPose = null;
+  if (state.cuePhase === 'volume-up' || state.cuePhase === 'volume-down') state.cuePhase = state.isCueMode ? 'ready' : 'idle';
+  resetVolumeMotion();
   clearStopBuffer();
   setTimeout(stopDroneNodes, 390);
   updateControls();
@@ -123,6 +191,8 @@ async function toggleDrone() {
     state.droneGain.gain.cancelScheduledValues(state.audio.currentTime);
     state.droneGain.gain.linearRampToValueAtTime(.0001, state.audio.currentTime + .7);
     setTimeout(stopDroneNodes, 850);
+    if (state.cuePhase === 'volume-up' || state.cuePhase === 'volume-down') state.cuePhase = state.isCueMode ? 'ready' : 'idle';
+    resetVolumeMotion();
     clearStopBuffer();
   }
   updateControls();
@@ -206,18 +276,39 @@ function stopListening() {
 }
 
 async function cueDrone() {
+  if (gestureTest.enabled) {
+    const wasDrone = state.isDrone;
+    state.isDrone = true;
+    clearStopBuffer();
+    if (!wasDrone) {
+      state.stopCooldownUntil = gestureNow() + 900;
+      state.cueCooldownUntil = gestureNow() + 900;
+      state.cuePhase = 'cooldown';
+      state.gestureCommandAwaitReset = true;
+      state.gestureCommandResetPose = null;
+      emitGestureEvent('start', { volume: state.volume });
+    }
+    updateControls();
+    return;
+  }
   setupAudio();
   if (state.audio.state !== 'running') state.audio.resume().catch(() => {});
   const now = state.audio.currentTime;
   const targetLevel = (state.volume / 100) * .18;
   if (!state.isDrone) {
     clearStopBuffer();
+    state.stopCooldownUntil = gestureNow() + 900;
+    state.cueCooldownUntil = gestureNow() + 900;
+    state.cuePhase = 'cooldown';
+    state.gestureCommandAwaitReset = true;
+    state.gestureCommandResetPose = null;
     state.isDrone = true;
     buildDrone();
     state.droneGain.gain.cancelScheduledValues(now);
     state.droneGain.gain.setValueAtTime(.0001, now);
     state.droneGain.gain.exponentialRampToValueAtTime(Math.max(.0002, targetLevel * .62), now + .055);
     state.droneGain.gain.exponentialRampToValueAtTime(Math.max(.0002, targetLevel), now + .22);
+    emitGestureEvent('start', { volume: state.volume });
   } else {
     state.droneGain.gain.cancelScheduledValues(now);
     state.droneGain.gain.setValueAtTime(Math.max(.0001, state.droneGain.gain.value), now);
@@ -246,6 +337,56 @@ async function enterCamera() {
   }
 }
 
+async function enterFixtureCamera() {
+  if (!gestureTest.enabled || !gestureTest.fixture || state.isCamera) return;
+  try {
+    const fixtureUrl = new URL(gestureTest.fixture, window.location.href);
+    if (fixtureUrl.origin !== window.location.origin) throw new Error('Fixture must be served from the same origin.');
+    el.camera.srcObject = null;
+    el.camera.src = fixtureUrl.href;
+    el.camera.autoplay = false;
+    el.camera.muted = true;
+    el.camera.loop = false;
+    el.camera.playbackRate = 1;
+    await new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error('Fixture video did not load.')), 10000);
+      el.camera.addEventListener('loadeddata', () => { clearTimeout(timeout); resolve(); }, { once: true });
+      el.camera.load();
+    });
+    el.camera.pause();
+    el.camera.currentTime = 0;
+    el.camera.addEventListener('ended', () => {
+      setTimeout(() => {
+        state.handLoopRunning = false;
+        reportGestureTest('fixture-ended', {
+          duration: el.camera.duration,
+          processedFrames: gestureTest.processedFrames,
+          handFrames: gestureTest.handFrames
+        });
+      }, 700);
+    }, { once: true });
+    state.isCamera = true;
+    document.body.classList.add('camera-active', 'gesture-fixture-active');
+    setControlsCollapsed(true);
+    gestureTest.warmingUp = true;
+    const modelReady = new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error('Hand tracker did not initialize.')), 15000);
+      gestureTest.warmupResolve = () => { clearTimeout(timeout); resolve(); };
+    });
+    startHandTracking();
+    await modelReady;
+    gestureTest.warmingUp = false;
+    gestureTest.warmupResolve = null;
+    state.smoothedPose = null;
+    resetGestureHold();
+    await el.camera.play();
+    reportGestureTest('fixture-started', { fixture: gestureTest.fixture, duration: el.camera.duration });
+  } catch (error) {
+    reportGestureTest('fixture-error', { message: error instanceof Error ? error.message : String(error) });
+    updateGestureState('fixture could not be played');
+  }
+}
+
 function exitCamera() {
   state.cameraStream?.getTracks().forEach(track => track.stop());
   state.cameraStream = null;
@@ -258,6 +399,9 @@ function exitCamera() {
   state.activeCueHandLabel = null;
   state.activeCueHandPosition = null;
   state.cueRecording = null;
+  state.cuePhase = 'idle';
+  state.cueAnchor = null;
+  resetVolumeMotion();
   document.body.classList.remove('is-recording');
   clearMotionBuffer();
   clearStopBuffer();
@@ -290,11 +434,13 @@ function handPose(landmarks) {
   const fingerTotal = averagePoint(fingerTips);
   const fingerCenter = { x: fingerTotal.x / fingerTips.length, y: fingerTotal.y / fingerTips.length, z: fingerTotal.z / fingerTips.length };
   const width = Math.max(pointDistance(landmarks[5], landmarks[17]), .001);
+  const spread = ([[8, 12], [12, 16], [16, 20]]
+    .reduce((total, [first, second]) => total + pointDistance(landmarks[first], landmarks[second]), 0) / 3) / width;
   const ratios = [[8, 6], [12, 10], [16, 14], [20, 18]].map(([tip, pip]) => pointDistance(landmarks[tip], landmarks[0]) / Math.max(pointDistance(landmarks[pip], landmarks[0]), .001));
   const a = { x: landmarks[5].x - landmarks[0].x, y: landmarks[5].y - landmarks[0].y, z: landmarks[5].z - landmarks[0].z };
   const b = { x: landmarks[17].x - landmarks[0].x, y: landmarks[17].y - landmarks[0].y, z: landmarks[17].z - landmarks[0].z };
   const normal = normalize({ x: a.y * b.z - a.z * b.y, y: a.z * b.x - a.x * b.z, z: a.x * b.y - a.y * b.x });
-  return { center, fingerCenter, width, ratios, normal };
+  return { center, fingerCenter, width, spread, ratios, normal };
 }
 
 function closestCueHandIndex(allHands, reference) {
@@ -314,7 +460,12 @@ function closestCueHandIndex(allHands, reference) {
 }
 
 function isClosedFist(pose) {
-  return pose.ratios.filter(ratio => ratio < 1.1).length >= 3;
+  const foldedFingers = pose.ratios.filter(ratio => ratio < 1.12).length;
+  return pose.ratios[0] < 1.12 && foldedFingers >= 3;
+}
+
+function handExtension(pose) {
+  return pose.ratios.reduce((total, ratio) => total + ratio, 0) / pose.ratios.length;
 }
 
 function matchesCalibration(pose) {
@@ -324,7 +475,10 @@ function matchesCalibration(pose) {
 }
 
 function isSteady(pose, reference) {
-  return pointDistance(pose.center, reference.center) < .11 && dot(pose.normal, reference.normal) > .35;
+  // Holding a conducting fist should not require keeping it pinned to a
+  // pixel. The reference pose is blended forward while the timer runs, so
+  // this still rejects a deliberate sweep while tolerating ordinary drift.
+  return pointDistance(pose.center, reference.center) < .145 && dot(pose.normal, reference.normal) > .2;
 }
 
 function blendPose(from, to, amount) {
@@ -333,6 +487,7 @@ function blendPose(from, to, amount) {
     center: blendPoint(from.center, to.center),
     fingerCenter: blendPoint(from.fingerCenter, to.fingerCenter),
     width: from.width + (to.width - from.width) * amount,
+    spread: from.spread + (to.spread - from.spread) * amount,
     ratios: from.ratios.map((ratio, index) => ratio + (to.ratios[index] - ratio) * amount),
     normal: normalize(blendPoint(from.normal, to.normal))
   };
@@ -397,6 +552,21 @@ function drawGestureCue(pose, progress, mode) {
 
 function updateGestureState(text) {
   el.gestureState.textContent = text;
+  if (gestureTest.enabled) {
+    const telemetryState = text.includes('hold steady to enter') ? 'arming cue mode'
+      : text.startsWith('cue mode · release') ? 'cue mode entered'
+      : text.startsWith('cue received') ? 'start cue recognized'
+      : text.startsWith('start received') ? 'awaiting hand clear'
+      : text.startsWith('drone sounding') ? 'dynamics ready'
+      : text.startsWith('volume raise') || text.startsWith('raising volume') ? 'raise active'
+      : text.startsWith('volume lower') || text.startsWith('lowering volume') ? 'lower active'
+      : text.startsWith('release received') ? 'stop recognized'
+      : null;
+    if (telemetryState && telemetryState !== gestureTest.lastReportedState) {
+      gestureTest.lastReportedState = telemetryState;
+      reportGestureTest('fsm-state', { state: telemetryState, at: gestureNow() });
+    }
+  }
 }
 
 function clearMotionBuffer() {
@@ -407,7 +577,7 @@ function resetCueGate() {
   state.cueGate = null;
 }
 
-function mirroredPoint(pose, at = performance.now()) {
+function mirroredPoint(pose, at = gestureNow()) {
   return { x: 1 - pose.center.x, y: pose.center.y, at };
 }
 
@@ -420,7 +590,7 @@ function beginsCueMotion(pose, reference) {
 }
 
 function advanceCueGate(pose, copy) {
-  const now = performance.now();
+  const now = gestureNow();
   if (isClosedFist(pose)) {
     resetCueGate();
     updateGestureState(copy.open || 'open your hand to arm');
@@ -463,7 +633,7 @@ function advanceCueGate(pose, copy) {
 }
 
 function recordMotionPoint(pose) {
-  const now = performance.now();
+  const now = gestureNow();
   state.motionBuffer.push(mirroredPoint(pose, now));
   state.motionBuffer = state.motionBuffer.filter(point => now - point.at < 2200);
 }
@@ -498,6 +668,263 @@ function completeLiveCue(pose, now) {
   updateGestureState('cue received · drone blooms');
 }
 
+function setDroneVolume(level) {
+  const nextVolume = clamp(level, 0, 100);
+  if (Math.abs(nextVolume - state.volume) < .04) return;
+  state.volume = nextVolume;
+  el.volume.value = String(Math.round(nextVolume));
+  updateControls();
+  if (state.isDrone && state.audio && state.droneGain) {
+    state.droneGain.gain.setTargetAtTime((state.volume / 100) * .18, state.audio.currentTime, .055);
+  }
+  const feedbackStep = Math.floor(state.volume / 10);
+  if (feedbackStep !== state.volumeFeedbackStep) {
+    state.volumeFeedbackStep = feedbackStep;
+    navigator.vibrate?.(10);
+  }
+  pulseVolumeHud();
+}
+
+function pulseVolumeHud() {
+  document.body.classList.add('volume-changing');
+  clearTimeout(state.volumeHudTimer);
+  state.volumeHudTimer = setTimeout(() => document.body.classList.remove('volume-changing'), 700);
+}
+
+function resetVolumeMotion() {
+  state.volumeMotionBuffer = [];
+  state.volumeRaiseReady = false;
+  state.volumeLowerReady = false;
+  state.volumeLowerPressing = false;
+  state.volumeIntentCandidate = null;
+  state.volumeIntentSince = 0;
+  state.volumeIntentLastEvidenceAt = 0;
+  state.volumeGestureLastPulseAt = 0;
+}
+
+function observeVolumeIntent(intent, now) {
+  if (state.volumeIntentCandidate !== intent) {
+    state.volumeIntentCandidate = intent;
+    state.volumeIntentSince = now;
+  }
+  state.volumeIntentLastEvidenceAt = now;
+}
+
+function volumePressY(pose) {
+  // A conductor's press often rotates the palm instead of translating every
+  // knuckle equally. Let the fingertips contribute to the tracked descent.
+  return pose.center.y * .62 + pose.fingerCenter.y * .38;
+}
+
+function trackVolumeMotion(pose, now) {
+  const point = {
+    at: now,
+    x: pose.center.x,
+    y: pose.center.y,
+    pressY: volumePressY(pose),
+    extension: handExtension(pose),
+    spread: pose.spread
+  };
+  state.volumeMotionBuffer.push(point);
+  state.volumeMotionBuffer = state.volumeMotionBuffer.filter(sample => now - sample.at < 440);
+  const referenceAt = age => {
+    let reference = state.volumeMotionBuffer[0];
+    for (const sample of state.volumeMotionBuffer) {
+      if (now - sample.at >= age) reference = sample;
+      else break;
+    }
+    return reference;
+  };
+  const curlReference = referenceAt(140);
+  const shortReference = referenceAt(90);
+  const mediumReference = referenceAt(210);
+  const xs = state.volumeMotionBuffer.map(sample => sample.x);
+  const ys = state.volumeMotionBuffer.map(sample => sample.y);
+  return {
+    point,
+    age: now - state.volumeMotionBuffer[0].at,
+    deltaY: point.y - curlReference.y,
+    deltaExtension: point.extension - curlReference.extension,
+    deltaPalmShort: point.y - shortReference.y,
+    deltaPalmMedium: point.y - mediumReference.y,
+    deltaPressShort: point.pressY - shortReference.pressY,
+    deltaPressMedium: point.pressY - mediumReference.pressY,
+    rangeX: Math.max(...xs) - Math.min(...xs),
+    rangeY: Math.max(...ys) - Math.min(...ys)
+  };
+}
+
+function isPressHandOpen(pose) {
+  const extendedFingers = pose.ratios.filter(ratio => ratio > 1.1).length;
+  return !isClosedFist(pose) && (handExtension(pose) > 1.08 || extendedFingers >= 2);
+}
+
+function completeGestureCommandReset() {
+  state.gestureCommandAwaitReset = false;
+  state.gestureCommandResetPose = null;
+  state.gestureCommandResetSince = 0;
+  state.gestureCommandMissingSince = 0;
+  state.cuePhase = 'ready';
+  resetVolumeMotion();
+  clearStopBuffer();
+  updateGestureState('drone sounding · shape its volume or release');
+}
+
+function evaluateGestureCommandReset(pose) {
+  if (!state.gestureCommandAwaitReset) return false;
+  const now = gestureNow();
+  state.gestureCommandResetPose = pose;
+  // The start cue's tail is protected briefly, then the same visible hand can
+  // flow directly into dynamics or release. Conductors should never have to
+  // remove their hand from the frame just to re-arm the recognizer.
+  if (now >= state.cueCooldownUntil) {
+    completeGestureCommandReset();
+    return false;
+  }
+  updateGestureState('start received · release your hand');
+  return true;
+}
+
+function beginVolumeGesture(command, pose, now) {
+  state.cuePhase = command;
+  state.volumeGestureLastY = volumePressY(pose);
+  state.volumeGestureLastPalmY = pose.center.y;
+  state.volumeGestureStartedAt = now;
+  state.volumeGestureLastMatchAt = now;
+  state.volumeGestureLastPulseAt = now;
+  state.volumeRaiseReady = handExtension(pose) > 1.18;
+  state.volumeLowerReady = false;
+  state.volumeLowerPressing = command === 'volume-down';
+  state.volumeFeedbackStep = Math.floor(state.volume / 10);
+  clearMotionBuffer();
+  clearStopBuffer();
+  pulseVolumeHud();
+  navigator.vibrate?.(18);
+  emitGestureEvent(command === 'volume-up' ? 'raise' : 'lower', { volume: state.volume });
+  updateGestureState(command === 'volume-up' ? 'volume raise · beckon the sound closer' : 'volume lower · press the sound down');
+}
+
+function finishVolumeGesture(pose, now) {
+  state.cuePhase = 'cooldown';
+  state.cueAnchor = pose;
+  state.cueStillSince = now;
+  state.cueCooldownUntil = now + 500;
+  state.volumeFeedbackStep = null;
+  resetVolumeMotion();
+  clearStopBuffer();
+  updateGestureState(`volume set · ${Math.round(state.volume)}%`);
+}
+
+function evaluateVolumeGesture(pose) {
+  if (!state.isCueMode || !state.isDrone || state.isCalibrating || state.cueRecording) return false;
+  const now = gestureNow();
+  if (state.cuePhase === 'cooldown') {
+    if (now < state.cueCooldownUntil) return false;
+    state.cuePhase = 'ready';
+    state.cueAnchor = pose;
+    resetVolumeMotion();
+    updateGestureState('drone sounding · shape its volume or release');
+  }
+  const motion = trackVolumeMotion(pose, now);
+  const isActive = state.cuePhase === 'volume-up' || state.cuePhase === 'volume-down';
+
+  if (isActive) {
+    const activeCommand = state.cuePhase;
+    if (activeCommand === 'volume-up') {
+      if (motion.point.extension > 1.18) state.volumeRaiseReady = true;
+      const curlPulse = state.volumeRaiseReady && motion.deltaExtension < -.03 && motion.rangeX < .075 && motion.rangeY < .095;
+      if (curlPulse && now - state.volumeGestureLastPulseAt > 210) {
+        setDroneVolume(state.volume + clamp(-motion.deltaExtension * 48, 2.5, 7));
+        state.volumeGestureLastPulseAt = now;
+        state.volumeGestureLastMatchAt = now;
+        state.volumeRaiseReady = false;
+      }
+    } else {
+      const openHand = isPressHandOpen(pose);
+      const downwardDelta = motion.point.pressY - state.volumeGestureLastY;
+      const palmDownwardDelta = motion.point.y - state.volumeGestureLastPalmY;
+      const resetting = openHand && motion.age >= 90 && motion.deltaPalmShort < -.004;
+      const descending = openHand && motion.age >= 90
+        && motion.deltaExtension > -.02
+        && (motion.deltaPalmShort > .006 || motion.deltaPalmMedium > .012);
+
+      if (resetting) {
+        state.volumeLowerReady = true;
+        state.volumeLowerPressing = false;
+        state.volumeGestureLastMatchAt = now;
+      } else if (!state.volumeLowerPressing && state.volumeLowerReady && descending) {
+        state.volumeLowerPressing = true;
+      }
+
+      if (state.volumeLowerPressing && palmDownwardDelta > .00035 && motion.deltaPalmShort > .0025) {
+        setDroneVolume(state.volume - Math.max(downwardDelta, palmDownwardDelta) * 155);
+        state.volumeGestureLastMatchAt = now;
+      }
+
+      // Reaching the bottom completes one press. A visible upward reset arms
+      // the next one, preventing stationary tracking jitter from draining it.
+      if (state.volumeLowerPressing && motion.age >= 90 && motion.deltaPalmShort < .001) {
+        state.volumeLowerPressing = false;
+        state.volumeLowerReady = false;
+      }
+    }
+    state.volumeGestureLastY = motion.point.pressY;
+    state.volumeGestureLastPalmY = motion.point.y;
+    updateGestureState(activeCommand === 'volume-up'
+      ? `raising volume · ${Math.round(state.volume)}%`
+      : `lowering volume · ${Math.round(state.volume)}%`);
+
+    if (now - state.volumeGestureLastMatchAt > 760 || now - state.volumeGestureStartedAt > 4200) {
+      finishVolumeGesture(pose, now);
+    }
+    return true;
+  }
+
+  const openPressHand = isPressHandOpen(pose);
+  if (openPressHand && motion.age >= 100 && motion.deltaPalmShort <= .003) {
+    state.volumeLowerReady = true;
+  }
+  // Volume up is a beckoning curl: the fingers contract while the palm stays
+  // relatively planted. Volume down is a true palm translation. The neutral
+  // extension band prevents a subtle curl from being stolen by the press cue.
+  const raiseMotion = motion.deltaExtension < -.04
+    && motion.rangeX < .075 && motion.rangeY < .1 && motion.point.spread < .48;
+  // A press is translation of an open hand over a meaningful window. The
+  // medium-window requirement is the discriminator: a beckoning hand often
+  // relaxes a few pixels downward after its curl, but it has not actually
+  // pressed the sound down.
+  const lowerMotion = state.volumeLowerReady && openPressHand && motion.age >= 170
+    && motion.point.extension > 1.08
+    && motion.deltaExtension > -.035
+    && motion.deltaPalmMedium > .022
+    && motion.rangeY > .025;
+
+  if (raiseMotion) observeVolumeIntent('volume-up', now);
+  else if (lowerMotion) observeVolumeIntent('volume-down', now);
+  else if (state.volumeIntentCandidate && now - state.volumeIntentLastEvidenceAt > 150) {
+    state.volumeIntentCandidate = null;
+    state.volumeIntentSince = 0;
+  }
+
+  const confirmedRaise = state.volumeIntentCandidate === 'volume-up'
+    && now - state.volumeIntentSince >= 45;
+  const confirmedLower = state.volumeIntentCandidate === 'volume-down'
+    && now - state.volumeIntentSince >= 75;
+  if (confirmedRaise) {
+    beginVolumeGesture('volume-up', pose, now);
+    setDroneVolume(state.volume + clamp(-motion.deltaExtension * 46, 2.5, 7));
+    state.volumeRaiseReady = false;
+    return true;
+  }
+  if (confirmedLower) {
+    beginVolumeGesture('volume-down', pose, now);
+    const pressDistance = Math.max(motion.deltaPalmShort, motion.deltaPalmMedium);
+    setDroneVolume(state.volume - clamp(pressDistance * 115, 2.5, 6));
+    return true;
+  }
+  return false;
+}
+
 function loopMetrics(points) {
   if (points.length < 12) return null;
   const first = points[0];
@@ -514,6 +941,7 @@ function loopMetrics(points) {
   center.y /= points.length;
   let pathLength = 0;
   let winding = 0;
+  let angularTravel = 0;
   let previousAngle = Math.atan2(points[0].y - center.y, points[0].x - center.x);
   for (let index = 1; index < points.length; index++) {
     pathLength += Math.hypot(points[index].x - points[index - 1].x, points[index].y - points[index - 1].y);
@@ -522,6 +950,7 @@ function loopMetrics(points) {
     while (delta > Math.PI) delta -= Math.PI * 2;
     while (delta < -Math.PI) delta += Math.PI * 2;
     winding += delta;
+    angularTravel += Math.abs(delta);
     previousAngle = angle;
   }
   const head = points.slice(0, Math.min(4, points.length));
@@ -529,7 +958,13 @@ function loopMetrics(points) {
   const startGrip = head.reduce((total, point) => total + point.grip, 0) / head.length;
   const endGrip = tail.reduce((total, point) => total + point.grip, 0) / tail.length;
   const endsInFist = tail.some(point => point.isFist);
-  return { duration, width, height, pathLength, winding: Math.abs(winding), returnDistance: Math.hypot(last.x - first.x, last.y - first.y), startGrip, endGrip, gripGain: endGrip - startGrip, endsInFist };
+  const netWinding = Math.abs(winding);
+  return {
+    duration, width, height, pathLength, winding: netWinding, angularTravel,
+    turnConsistency: netWinding / Math.max(angularTravel, .001),
+    returnDistance: Math.hypot(last.x - first.x, last.y - first.y),
+    startGrip, endGrip, gripGain: endGrip - startGrip, endsInFist
+  };
 }
 
 function handGrip(pose) {
@@ -537,23 +972,26 @@ function handGrip(pose) {
 }
 
 function evaluateReleaseLoop(pose) {
-  if (!state.isCueMode || !state.isDrone || state.isCalibrating || state.cueRecording || performance.now() < state.stopCooldownUntil) return false;
-  const now = performance.now();
+  if (!state.isCueMode || !state.isDrone || state.isCalibrating || state.cueRecording || gestureNow() < state.stopCooldownUntil) return false;
+  const now = gestureNow();
   state.stopBuffer.push({ ...mirroredPoint(pose, now), grip: handGrip(pose), isFist: isClosedFist(pose) });
   state.stopBuffer = state.stopBuffer.filter(point => now - point.at < 1300);
   const metrics = loopMetrics(state.stopBuffer);
   if (!metrics) return false;
   const closesIntoRelease = metrics.startGrip < .68 && (metrics.endsInFist || (metrics.endGrip > .52 && metrics.gripGain > .16));
-  const movingStroke = metrics.width > .028 && metrics.height > .028 && metrics.pathLength > .14;
-  const curvedMotion = metrics.winding > .8;
-  const returningStroke = metrics.pathLength > .2 && metrics.returnDistance < .22;
-  const isReleaseGesture = metrics.duration > 220 && metrics.duration < 1350 && closesIntoRelease && movingStroke && (curvedMotion || returningStroke);
+  const aspectRatio = Math.min(metrics.width, metrics.height) / Math.max(metrics.width, metrics.height, .001);
+  const movingStroke = metrics.width > .052 && metrics.height > .052 && metrics.pathLength > .22;
+  const curvedMotion = metrics.winding > 3.8 && metrics.turnConsistency > .58 && aspectRatio > .4;
+  const returningStroke = metrics.returnDistance < Math.max(.1, Math.max(metrics.width, metrics.height) * .82);
+  const isReleaseGesture = metrics.duration > 360 && metrics.duration < 1350
+    && closesIntoRelease && movingStroke && curvedMotion && returningStroke;
   if (!isReleaseGesture) return false;
   state.stopCooldownUntil = now + 1200;
   clearMotionBuffer();
   resetCueGate();
   clearGestureCanvas();
   updateGestureState('release received · field settles');
+  emitGestureEvent('stop', { volume: state.volume });
   releaseDrone();
   return true;
 }
@@ -672,7 +1110,7 @@ async function beginCueMotionRecording({ restart = false } = {}) {
 function captureCueMotion(pose) {
   const recording = state.cueRecording;
   if (!recording) return false;
-  const now = performance.now();
+  const now = gestureNow();
   if (recording.phase === 'waiting') {
     recording.phase = 'countdown';
     recording.startedAt = now;
@@ -745,7 +1183,7 @@ function captureCueMotion(pose) {
 async function evaluateCueMotion(pose) {
   if (!state.isCueMode || state.isCalibrating || state.gestureAwaitRelease) return;
   if (captureCueMotion(pose)) return;
-  const now = performance.now();
+  const now = gestureNow();
   if (state.cuePhase === 'idle' || state.cuePhase === 'await-release' || !state.cueAnchor) beginLiveCueTracking(pose);
 
   if (state.cuePhase === 'cooldown') {
@@ -834,6 +1272,7 @@ function toggleCueMode() {
   state.cueAnchor = null;
   state.cueStartedAt = 0;
   state.cueStillSince = 0;
+  resetVolumeMotion();
   state.autoTeachOnRelease = false;
   document.body.classList.remove('is-recording');
   clearMotionBuffer();
@@ -859,9 +1298,14 @@ function evaluateGesture(pose) {
     return;
   }
   if (state.gestureAwaitRelease) return;
-  const now = performance.now();
-  if (!state.gestureHold || !isSteady(pose, state.gestureHold.pose)) state.gestureHold = { pose, startedAt: now };
-  else state.gestureHold.pose = blendPose(state.gestureHold.pose, pose, .07);
+  const now = gestureNow();
+  if (!state.gestureHold || (state.isCalibrating && !isSteady(pose, state.gestureHold.pose))) {
+    state.gestureHold = { pose, startedAt: now };
+  } else {
+    // Entering/exiting cue mode means holding the fist shape, not freezing the
+    // arm in space. Keep the countdown attached to a naturally moving hand.
+    state.gestureHold.pose = blendPose(state.gestureHold.pose, pose, .18);
+  }
   const progress = Math.min(1, (now - state.gestureHold.startedAt) / 3000);
   updateGestureState(state.isCalibrating ? 'hold steady to save your cue' : state.isCueMode ? 'hold steady to leave cue mode' : 'hold steady to enter cue mode');
   drawGestureCue(pose, progress, mode);
@@ -871,6 +1315,14 @@ function evaluateGesture(pose) {
 }
 
 function onHandResults(results) {
+  if (gestureTest.enabled) {
+    gestureTest.processedFrames += 1;
+    if (results.multiHandLandmarks?.length) gestureTest.handFrames += 1;
+  }
+  if (gestureTest.enabled && gestureTest.warmingUp) {
+    gestureTest.warmupResolve?.();
+    return;
+  }
   const allHands = results.multiHandLandmarks || [];
   const handLabels = results.multiHandedness || [];
   let activeIndex = 0;
@@ -878,7 +1330,8 @@ function onHandResults(results) {
     const matchingIndexes = handLabels
       .map((handedness, index) => handedness.label === state.activeCueHandLabel ? index : -1)
       .filter(index => index >= 0);
-    activeIndex = matchingIndexes.length === 1
+    const hasUniqueLabelMatch = matchingIndexes.length === 1;
+    activeIndex = hasUniqueLabelMatch
       ? matchingIndexes[0]
       : matchingIndexes.reduce((closest, index) => {
         if (closest < 0 || !state.activeCueHandPosition) return index;
@@ -889,7 +1342,9 @@ function onHandResults(results) {
     const selectedDistance = activeIndex >= 0 && state.activeCueHandPosition
       ? pointDistance(handPose(allHands[activeIndex]).center, state.activeCueHandPosition)
       : 0;
-    if (activeIndex < 0 || selectedDistance >= .3) activeIndex = closestCueHandIndex(allHands, state.activeCueHandPosition);
+    if (activeIndex < 0 || (!hasUniqueLabelMatch && selectedDistance >= .3)) {
+      activeIndex = closestCueHandIndex(allHands, state.activeCueHandPosition);
+    }
   }
   const landmarks = activeIndex >= 0 ? allHands[activeIndex] : null;
   if (!landmarks) {
@@ -899,14 +1354,19 @@ function onHandResults(results) {
         updateGestureState(`cue sample ${state.cueTemplates.length + 1}/3 · show your cue hand`);
         return;
       }
-      state.cueRecording.missingSince ||= performance.now();
-      if (performance.now() - state.cueRecording.missingSince < 500) return;
+      state.cueRecording.missingSince ||= gestureNow();
+      if (gestureNow() - state.cueRecording.missingSince < 500) return;
       state.cueRecording = null;
       document.body.classList.remove('is-recording');
       resetCueGate();
       recordingInterrupted = true;
     }
     state.smoothedPose = null;
+    if (state.isDrone && state.gestureCommandAwaitReset) {
+      state.gestureCommandMissingSince ||= gestureNow();
+      if (gestureNow() - state.gestureCommandMissingSince >= 500) completeGestureCommandReset();
+    }
+    if (state.isDrone) resetVolumeMotion();
     if (!state.isCueMode || state.cueRecording || state.isCalibrating) {
       clearMotionBuffer();
       resetGestureHold();
@@ -918,7 +1378,26 @@ function onHandResults(results) {
     return;
   }
   state.currentHandLabel = handLabels[activeIndex]?.label || null;
+  state.gestureCommandMissingSince = 0;
   const pose = smoothPose(handPose(landmarks));
+  if (gestureTest.enabled) {
+    reportGestureTest('pose-frame', {
+      frame: {
+        at: gestureNow(),
+        center: pose.center,
+        fingerCenter: pose.fingerCenter,
+        width: pose.width,
+        spread: pose.spread,
+        extension: handExtension(pose),
+        ratios: pose.ratios,
+        grip: handGrip(pose),
+        isFist: isClosedFist(pose),
+        cuePhase: state.cuePhase,
+        isDrone: state.isDrone,
+        awaitingReset: state.gestureCommandAwaitReset
+      }
+    });
+  }
   if (state.isCueMode) state.activeCueHandPosition = pose.center;
   if (state.cueRecording) {
     state.cueRecording.missingSince = null;
@@ -926,14 +1405,28 @@ function onHandResults(results) {
     return;
   }
   const isFist = isClosedFist(pose) && (state.isCalibrating || matchesCalibration(pose));
-  if (evaluateReleaseLoop(pose)) return;
+  if (state.isDrone) {
+    if (evaluateGestureCommandReset(pose)) {
+      evaluateGesture(pose);
+      return;
+    }
+    if (evaluateReleaseLoop(pose)) return;
+    if (evaluateVolumeGesture(pose)) return;
+    evaluateGesture(pose);
+    return;
+  }
   evaluateGesture(pose);
   if (!isFist) evaluateCueMotion(pose);
 }
 
 async function handTrackingLoop() {
   if (!state.handLoopRunning || !state.isCamera) return;
-  if (el.camera.readyState >= 2) await state.hands.send({ image: el.camera });
+  const frameTime = el.camera.currentTime;
+  const hasNewFixtureFrame = !gestureTest.enabled || Math.abs(frameTime - gestureTest.lastFrameTime) >= .025;
+  if (el.camera.readyState >= 2 && hasNewFixtureFrame) {
+    gestureTest.lastFrameTime = frameTime;
+    await state.hands.send({ image: el.camera });
+  }
   requestAnimationFrame(handTrackingLoop);
 }
 
@@ -947,7 +1440,7 @@ function startHandTracking() {
     state.hands = new window.Hands({ locateFile: file => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}` });
     state.hands.onResults(onHandResults);
   }
-  state.hands.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: .66, minTrackingConfidence: .62 });
+  state.hands.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: .58, minTrackingConfidence: .55 });
   state.handLoopRunning = true;
   updateGestureState(state.isCueMode ? cuePrompt() : 'hold a fist to cue');
   handTrackingLoop();
@@ -1034,10 +1527,14 @@ function updateControls() {
   el.orbCopy.innerHTML = state.isCueMode ? 'cue<br />ready' : state.isListening ? 'listen<br />within' : state.isDrone ? 'release<br />home' : 'hold<br />home';
   document.body.classList.toggle('is-listening', state.isListening);
   document.body.classList.toggle('is-cue-mode', state.isCueMode);
+  document.body.classList.toggle('drone-active', state.isDrone);
   el.status.classList.toggle('active', state.isDrone || state.isListening);
   el.statusText.textContent = state.isListening ? 'FIELD LISTENING' : state.isDrone ? 'DRONE OPEN' : 'DRONE STANDBY';
   el.mic.classList.toggle('active', state.isListening); el.mic.textContent = state.isListening ? 'listening · stop' : 'enable listening';
-  el.volumeOutput.value = `${state.volume}%`;
+  el.volumeOutput.value = `${Math.round(state.volume)}%`;
+  el.volumeHudValue.textContent = String(Math.round(state.volume));
+  el.volumeHudMeter.style.width = `${state.volume}%`;
+  el.volumeHud.style.setProperty('--volume-scale', String(.72 + state.volume / 100 * .56));
   el.warmthOutput.value = state.warmth < 35 ? 'pure' : state.warmth < 72 ? 'warm' : 'blooming';
   el.sensitivityOutput.value = state.sensitivity < 35 ? 'focused' : state.sensitivity < 72 ? 'balanced' : 'open';
   el.target.textContent = state.isCueMode ? `CUE MODE · ${noteNames[state.key]}` : state.isListening ? `LISTENING · FIND ${noteNames[state.key]}` : `TONIC · ${noteNames[state.key]}`;
@@ -1138,3 +1635,4 @@ updateDescriptors(0); updateCueRecordButton(); updateControls(); requestAnimatio
 refreshMicrophones();
 navigator.mediaDevices?.addEventListener?.('devicechange', refreshMicrophones);
 setInterval(() => { readPitch(); updateLiveCopy(); }, 70);
+if (gestureTest.enabled) enterFixtureCamera();

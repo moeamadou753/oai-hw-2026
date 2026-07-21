@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#080b16" />
     <title>Tonal Field</title>
-    <link rel="stylesheet" href="styles.css?v=gesture-harness-v43" />
+    <link rel="stylesheet" href="styles.css?v=gesture-harness-v44" />
   </head>
   <body>
     <video id="camera-feed" class="camera-feed" autoplay muted playsinline aria-hidden="true"></video>
@@ -45,6 +45,7 @@
 
         <div class="field-wrap">
           <canvas id="field" width="1000" height="1000" aria-label="Live tonal field visualization"></canvas>
+          <div id="fifths-overlay" class="fifths-overlay" aria-hidden="true"></div>
           <div class="target-label" id="target-label">TONIC · C</div>
           <button id="orb-button" class="orb-button" type="button" aria-pressed="false" aria-label="Start the drone">
             <span class="orb-core"></span>
@@ -124,6 +125,6 @@
 
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js"></script>
-    <script src="app.js?v=gesture-harness-v43"></script>
+    <script src="app.js?v=gesture-harness-v44"></script>
   </body>
 </html>

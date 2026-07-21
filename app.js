@@ -30,6 +30,7 @@ const gestureTest = {
 
 const el = {
   canvas: document.getElementById('field'), orb: document.getElementById('orb-button'), orbCopy: document.getElementById('orb-copy'),
+  fifthsOverlay: document.getElementById('fifths-overlay'),
   key: document.getElementById('key-select'), octave: document.getElementById('octave-select'), warmth: document.getElementById('warmth'),
   warmthOutput: document.getElementById('warmth-output'), volume: document.getElementById('volume'), volumeOutput: document.getElementById('volume-output'),
   sensitivity: document.getElementById('sensitivity'), sensitivityOutput: document.getElementById('sensitivity-output'),
@@ -74,7 +75,7 @@ const state = {
   gestureCommandAwaitReset: false, gestureCommandResetPose: null, gestureCommandResetSince: 0,
   gestureCommandMissingSince: 0,
   earGestureStartedAt: 0, earGestureCooldownUntil: 0,
-  orbGrabActive: false, orbGrabAngle: 0, orbGrabAccumulatedAngle: 0, orbGrabLastStepAt: 0, orbGrabEnteredAt: 0,
+  orbGrabActive: false, orbGrabAngle: 0, orbGrabAccumulatedAngle: 0, orbGrabLastStepAt: 0, orbGrabEnteredAt: 0, orbGrabHasMoved: false,
   currentHandLabel: null, activeCueHandLabel: null, activeCueHandPosition: null,
   cueTemplates: gestureTest.enabled ? [] : JSON.parse(localStorage.getItem('tonal-field-cue-motion') || '[]'),
   gestureCalibration: gestureTest.enabled ? null : JSON.parse(localStorage.getItem('tonal-field-cue') || 'null'),
@@ -642,10 +643,26 @@ function evaluateEarListeningGesture(pose) {
 
 const circleOfFifths = [0, 7, 2, 9, 4, 11, 6, 1, 8, 3, 10, 5];
 
+function buildFifthsOverlay() {
+  el.fifthsOverlay.innerHTML = circleOfFifths.map((key, index) => {
+    const angle = -Math.PI / 2 + index * Math.PI * 2 / circleOfFifths.length;
+    const x = 50 + Math.cos(angle) * 42;
+    const y = 50 + Math.sin(angle) * 42;
+    return `<span class="fifths-note" data-fifths-key="${key}" style="left:${x}%;top:${y}%">${noteNames[key]}</span>`;
+  }).join('');
+}
+
+function updateFifthsOverlay() {
+  el.fifthsOverlay.querySelectorAll('[data-fifths-key]').forEach(note => {
+    note.classList.toggle('active', Number(note.dataset.fifthsKey) === state.key);
+  });
+}
+
 function resetOrbGrab() {
   state.orbGrabActive = false;
   state.orbGrabAccumulatedAngle = 0;
   state.orbGrabEnteredAt = 0;
+  state.orbGrabHasMoved = false;
   document.body.classList.remove('is-grabbing-orb');
 }
 
@@ -670,15 +687,18 @@ function isOrbPointer(pose) {
   return Boolean(pose.indexTip) && pose.ratios[0] > 1.08;
 }
 
-function shiftKeyByFifths(direction) {
-  const currentIndex = circleOfFifths.indexOf(state.key);
-  const nextIndex = cleanModulo(currentIndex + direction, circleOfFifths.length);
-  state.key = circleOfFifths[nextIndex];
+function setKeyFromFifths(index) {
+  state.key = circleOfFifths[cleanModulo(index, circleOfFifths.length)];
   el.key.value = String(state.key);
   updateDrone();
   updateControls();
   el.orb.classList.remove('orb-key-shift');
   requestAnimationFrame(() => el.orb.classList.add('orb-key-shift'));
+}
+
+function fifthsIndexAtPointer(pointer, orb) {
+  const angle = Math.atan2(pointer.y - orb.y, pointer.x - orb.x);
+  return cleanModulo(Math.round((angle + Math.PI / 2) / (Math.PI * 2 / circleOfFifths.length)), circleOfFifths.length);
 }
 
 function evaluateOrbGrab(pose) {
@@ -699,6 +719,7 @@ function evaluateOrbGrab(pose) {
     state.orbGrabAccumulatedAngle = 0;
     state.orbGrabLastStepAt = now;
     state.orbGrabEnteredAt = now;
+    state.orbGrabHasMoved = false;
     document.body.classList.add('is-grabbing-orb');
     updateGestureState('orb field · trace around it');
     return true;
@@ -709,16 +730,24 @@ function evaluateOrbGrab(pose) {
   const delta = Math.atan2(Math.sin(angle - state.orbGrabAngle), Math.cos(angle - state.orbGrabAngle));
   state.orbGrabAngle = angle;
   state.orbGrabAccumulatedAngle += delta;
-  const stepAngle = Math.PI * .42; // roughly 76°: an easy, musical arc per fifth
-  if (Math.abs(state.orbGrabAccumulatedAngle) >= stepAngle && now - state.orbGrabLastStepAt > 160) {
-    const direction = state.orbGrabAccumulatedAngle > 0 ? 1 : -1;
-    shiftKeyByFifths(direction);
-    state.orbGrabAccumulatedAngle -= direction * stepAngle;
-    state.orbGrabLastStepAt = now;
-    updateGestureState(`${noteNames[state.key]} · ${direction > 0 ? 'clockwise' : 'counterclockwise'} through fifths`);
+  if (Math.abs(delta) > .028) state.orbGrabHasMoved = true;
+  const pointerRadius = Math.hypot(pointer.x - orb.x, pointer.y - orb.y);
+  // Touch the core to reveal the wheel, then drag outward through its labels.
+  // The inner dead zone prevents an accidental key jump on first contact.
+  const isOnFifthsRing = pointerRadius > orb.radius * .46;
+  if (isOnFifthsRing && state.orbGrabHasMoved) {
+    const fifthsIndex = fifthsIndexAtPointer(pointer, orb);
+    const nextKey = circleOfFifths[fifthsIndex];
+    if (nextKey !== state.key && now - state.orbGrabLastStepAt > 105) {
+      setKeyFromFifths(fifthsIndex);
+      state.orbGrabLastStepAt = now;
+      updateGestureState(`${noteNames[state.key]} · circle of fifths`);
+    }
   }
   return true;
 }
+
+buildFifthsOverlay();
 
 function updateGestureState(text) {
   el.gestureState.textContent = text;
@@ -1746,6 +1775,7 @@ function updateControls() {
   el.warmthOutput.value = state.warmth < 35 ? 'pure' : state.warmth < 72 ? 'warm' : 'blooming';
   el.sensitivityOutput.value = state.sensitivity < 35 ? 'focused' : state.sensitivity < 72 ? 'balanced' : 'open';
   el.target.textContent = state.isCueMode ? `CUE MODE · ${noteNames[state.key]}` : state.isListening ? `LISTENING · FIND ${noteNames[state.key]}` : `TONIC · ${noteNames[state.key]}`;
+  updateFifthsOverlay();
 }
 
 function draw(time) {

@@ -22,6 +22,20 @@ Open [http://localhost:4173](http://localhost:4173). Click **hold home** to star
 - A personal, persistent descriptor stream: select words that match how an interval lands for you.
 - An optional mirrored camera practice view with a three-second fist hold for Cue Mode. Record three examples of your own conducting cue; their normalized hand trajectories stay in local browser storage and can re-articulate the drone.
 
+### How GPT-5.6 and Codex were used
+
+Mimetry was developed with GPT-5.6 and Codex as an iterative design-and-engineering partner. The product direction came from the musician’s own practice experience and creative references; GPT-5.6 helped turn that material into an achievable Build Week scope, compare implementation options, and identify the most compelling V1: an embodied, drone-based interval-practice instrument.
+
+Codex accelerated the build in several concrete ways:
+
+- **Product and interaction design:** translated the creative direction into the camera-practice interface, central tonal orb, interval-descriptor language, and a circle-of-fifths transposition interaction.
+- **Audio implementation:** built the in-browser Web Audio drone, including additive partials, filtering, slow modulation, and controllable warmth so the sustained tone feels musical rather than like a harsh test signal.
+- **Gesture architecture:** implemented MediaPipe hand and face landmark interactions, then organized them as a finite-state machine. That makes commands context-aware: for example, dynamics gestures only operate while the drone is sounding, and start cannot retrigger once the drone is already active.
+- **Iterative debugging:** used recorded real-world gesture attempts to inspect tracking behavior, tune thresholds, preserve the active cue hand, and improve camera interaction without requiring the musician to interact with a mouse.
+- **Regression testing:** built a video-fixture harness that sends recorded gesture sequences through the production MediaPipe and state-machine path. It validates exact semantic event order and reports tracking coverage, making it possible to catch regressions as new gestures were added.
+
+GPT-5.6 was used for the reasoning-heavy parts of this loop—scoping trade-offs, interaction alternatives, and debugging hypotheses—while Codex carried those decisions into the codebase, tests, and visual refinements. The result is a working browser application rather than a static concept or a gesture prototype.
+
 ### Gesture regression harness
 
 Serve the project normally, then open [http://localhost:4173/gesture-tests.html](http://localhost:4173/gesture-tests.html). The harness runs the recordings in `gesture-fixtures/` through the same MediaPipe input and gesture state machine used by the live camera.

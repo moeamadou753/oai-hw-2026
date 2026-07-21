@@ -55,7 +55,8 @@ const state = {
   audio: null, droneGain: null, droneNodes: [], lfoNodes: [], isDrone: false,
   analyser: null, micStream: null, micSource: null,
   microphoneId: localStorage.getItem('tonal-field-microphone') || 'default',
-  cameraStream: null, hands: null, handLoopRunning: false,
+  cameraStream: null, hands: null, faceMesh: null, faceLandmarks: null, handLoopRunning: false,
+  faceTrackingBusy: false, lastFaceTrackingAt: 0,
   isListening: false, isCamera: false, isCueMode: false, isCalibrating: false,
   cueRecording: null, cueGate: null, cuePhase: 'idle', cueAnchor: null,
   cueStartedAt: 0, cueStillSince: 0, autoTeachOnRelease: false,
@@ -72,6 +73,7 @@ const state = {
   stopArcCandidateAt: 0,
   gestureCommandAwaitReset: false, gestureCommandResetPose: null, gestureCommandResetSince: 0,
   gestureCommandMissingSince: 0,
+  earGestureStartedAt: 0, earGestureCooldownUntil: 0,
   currentHandLabel: null, activeCueHandLabel: null, activeCueHandPosition: null,
   cueTemplates: gestureTest.enabled ? [] : JSON.parse(localStorage.getItem('tonal-field-cue-motion') || '[]'),
   gestureCalibration: gestureTest.enabled ? null : JSON.parse(localStorage.getItem('tonal-field-cue') || 'null'),
@@ -397,6 +399,10 @@ function exitCamera() {
   state.handLoopRunning = false;
   state.gestureHold = null;
   state.smoothedPose = null;
+  state.faceLandmarks = null;
+  state.faceTrackingBusy = false;
+  state.lastFaceTrackingAt = 0;
+  resetEarGesture();
   state.gestureAwaitRelease = false;
   state.activeCueHandLabel = null;
   state.activeCueHandPosition = null;
@@ -442,7 +448,10 @@ function handPose(landmarks) {
   const a = { x: landmarks[5].x - landmarks[0].x, y: landmarks[5].y - landmarks[0].y, z: landmarks[5].z - landmarks[0].z };
   const b = { x: landmarks[17].x - landmarks[0].x, y: landmarks[17].y - landmarks[0].y, z: landmarks[17].z - landmarks[0].z };
   const normal = normalize({ x: a.y * b.z - a.z * b.y, y: a.z * b.x - a.x * b.z, z: a.x * b.y - a.y * b.x });
-  return { center, fingerCenter, width, spread, ratios, normal };
+  return {
+    center, fingerCenter, width, spread, ratios, normal,
+    indexTip: landmarks[8], indexPip: landmarks[6]
+  };
 }
 
 function closestCueHandIndex(allHands, reference) {
@@ -488,6 +497,8 @@ function blendPose(from, to, amount) {
   return {
     center: blendPoint(from.center, to.center),
     fingerCenter: blendPoint(from.fingerCenter, to.fingerCenter),
+    indexTip: blendPoint(from.indexTip, to.indexTip),
+    indexPip: blendPoint(from.indexPip, to.indexPip),
     width: from.width + (to.width - from.width) * amount,
     spread: from.spread + (to.spread - from.spread) * amount,
     ratios: from.ratios.map((ratio, index) => ratio + (to.ratios[index] - ratio) * amount),
@@ -550,6 +561,75 @@ function drawGestureCue(pose, progress, mode) {
   gestureCtx.fillStyle = `rgba(${color}, .88)`;
   gestureCtx.font = '500 9px Inter, system-ui, sans-serif';
   gestureCtx.fillText(mode === 'calibrate' ? 'SAVE CUE' : mode === 'record' ? 'RECORD CUE' : mode === 'arm' ? (progress >= 1 ? 'ARMED' : 'ARMING') : state.isCueMode ? 'EXIT CUE MODE' : 'ENTER CUE MODE', x, y + 17);
+}
+
+function drawEarCue(pose, progress) {
+  resizeGestureCanvas();
+  clearGestureCanvas();
+  const x = (1 - pose.indexTip.x) * window.innerWidth;
+  const y = pose.indexTip.y * window.innerHeight;
+  const radius = Math.max(32, Math.min(62, pose.width * window.innerWidth * .52));
+  gestureCtx.lineCap = 'round';
+  gestureCtx.beginPath();
+  gestureCtx.arc(x, y, radius, -Math.PI / 2, Math.PI * 1.5);
+  gestureCtx.strokeStyle = 'rgba(196, 215, 162, .22)';
+  gestureCtx.lineWidth = 3;
+  gestureCtx.stroke();
+  gestureCtx.beginPath();
+  gestureCtx.arc(x, y, radius, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * progress);
+  gestureCtx.strokeStyle = 'rgba(196, 215, 162, .96)';
+  gestureCtx.shadowBlur = 16;
+  gestureCtx.shadowColor = 'rgb(196, 215, 162)';
+  gestureCtx.stroke();
+  gestureCtx.shadowBlur = 0;
+  gestureCtx.fillStyle = 'rgba(255, 249, 238, .96)';
+  gestureCtx.font = '500 10px Inter, system-ui, sans-serif';
+  gestureCtx.textAlign = 'center';
+  gestureCtx.textBaseline = 'middle';
+  gestureCtx.fillText(progress >= 1 ? 'LISTEN' : 'LISTEN', x, y + 2);
+}
+
+function resetEarGesture() {
+  state.earGestureStartedAt = 0;
+}
+
+function isPointingAtEar(pose) {
+  if (!state.faceLandmarks || !pose.indexTip) return false;
+  // 234 and 454 sit at the left/right face edge. They are a stable proxy for
+  // the ears without requiring a separate pose model.
+  const faceEdges = [state.faceLandmarks[234], state.faceLandmarks[454]];
+  const ear = faceEdges.reduce((nearest, edge) => pointDistance(pose.indexTip, edge) < pointDistance(pose.indexTip, nearest) ? edge : nearest);
+  const faceWidth = Math.max(pointDistance(faceEdges[0], faceEdges[1]), .001);
+  const indexExtended = pose.ratios[0] > 1.18;
+  const curledCompanions = pose.ratios.slice(1).filter(ratio => ratio < 1.22).length >= 2;
+  const uprightIndex = Math.abs(pose.indexTip.x - pose.indexPip.x) < .13;
+  const nearEar = pointDistance(pose.indexTip, ear) < Math.max(.16, faceWidth * .54);
+  const earHeight = Math.abs(pose.indexTip.y - ear.y) < faceWidth * .72;
+  return indexExtended && curledCompanions && uprightIndex && nearEar && earHeight;
+}
+
+function evaluateEarListeningGesture(pose) {
+  const now = gestureNow();
+  const canListenGesture = state.isCueMode && !state.isCalibrating && !state.cueRecording
+    && state.cuePhase === 'ready' && now >= state.earGestureCooldownUntil;
+  if (!canListenGesture || !isPointingAtEar(pose)) {
+    resetEarGesture();
+    return false;
+  }
+  state.earGestureStartedAt ||= now;
+  const progress = Math.min(1, (now - state.earGestureStartedAt) / 720);
+  drawEarCue(pose, progress);
+  updateGestureState(state.isListening ? 'hold at your ear to pause listening' : 'hold at your ear to listen');
+  if (progress < 1) return true;
+  const wasListening = state.isListening;
+  state.earGestureCooldownUntil = now + 1400;
+  resetEarGesture();
+  clearGestureCanvas();
+  startListening().then(() => {
+    updateGestureState(state.isListening ? 'listening enabled' : wasListening ? 'listening paused' : 'microphone permission needed');
+    updateControls();
+  });
+  return true;
 }
 
 function updateGestureState(text) {
@@ -1075,8 +1155,8 @@ function cueTemplateScore(template, points) {
 
 function cuePrompt() {
   return state.cueTemplates.length >= 3
-    ? 'cue mode ready · trace your cue · circle to release'
-    : 'cue mode ready · trace your cue · teach a custom cue in controls';
+    ? 'cue mode ready · trace your cue · point to your ear to listen'
+    : 'cue mode ready · trace your cue · point to your ear to listen';
 }
 
 function updateCueRecordButton() {
@@ -1293,6 +1373,9 @@ function toggleCueMode() {
   resetGestureHold();
   updateControls();
   updateGestureState(state.isCueMode ? 'cue mode · release your hand' : 'cue mode released · release your hand');
+  // Face tracking is only needed after cue mode is established for the ear
+  // gesture. Deferring it keeps the initial fist countdown purely hand-driven.
+  if (enteringCueMode) setTimeout(startFaceTracking, 450);
 }
 
 function evaluateGesture(pose) {
@@ -1324,6 +1407,10 @@ function evaluateGesture(pose) {
   if (progress >= 1) {
     if (state.isCalibrating) saveCalibration(pose); else toggleCueMode();
   }
+}
+
+function onFaceResults(results) {
+  state.faceLandmarks = results.multiFaceLandmarks?.[0] || null;
 }
 
 function onHandResults(results) {
@@ -1360,6 +1447,7 @@ function onHandResults(results) {
   }
   const landmarks = activeIndex >= 0 ? allHands[activeIndex] : null;
   if (!landmarks) {
+    resetEarGesture();
     let recordingInterrupted = false;
     if (state.cueRecording) {
       if (state.cueRecording.phase === 'waiting' || state.cueRecording.phase === 'interlude') {
@@ -1417,6 +1505,7 @@ function onHandResults(results) {
     return;
   }
   const isFist = isClosedFist(pose) && (state.isCalibrating || matchesCalibration(pose));
+  if (evaluateEarListeningGesture(pose)) return;
   if (state.isDrone) {
     if (evaluateGestureCommandReset(pose)) {
       evaluateGesture(pose);
@@ -1437,6 +1526,16 @@ async function handTrackingLoop() {
   const hasNewFixtureFrame = !gestureTest.enabled || Math.abs(frameTime - gestureTest.lastFrameTime) >= .025;
   if (el.camera.readyState >= 2 && hasNewFixtureFrame) {
     gestureTest.lastFrameTime = frameTime;
+    // Hands own the interaction frame rate. Face landmarks only enrich the
+    // ear-point gesture, so they run opportunistically rather than delaying
+    // fist/cue recognition.
+    if (!gestureTest.enabled && state.faceMesh && !state.faceTrackingBusy && performance.now() - state.lastFaceTrackingAt > 125) {
+      state.faceTrackingBusy = true;
+      state.lastFaceTrackingAt = performance.now();
+      state.faceMesh.send({ image: el.camera })
+        .catch(() => { state.faceLandmarks = null; })
+        .finally(() => { state.faceTrackingBusy = false; });
+    }
     await state.hands.send({ image: el.camera });
   }
   requestAnimationFrame(handTrackingLoop);
@@ -1456,6 +1555,13 @@ function startHandTracking() {
   state.handLoopRunning = true;
   updateGestureState(state.isCueMode ? cuePrompt() : 'hold a fist to cue');
   handTrackingLoop();
+}
+
+function startFaceTracking() {
+  if (!state.isCamera || !state.isCueMode || state.faceMesh || typeof window.FaceMesh !== 'function') return;
+  state.faceMesh = new window.FaceMesh({ locateFile: file => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}` });
+  state.faceMesh.onResults(onFaceResults);
+  state.faceMesh.setOptions({ maxNumFaces: 1, refineLandmarks: false, minDetectionConfidence: .5, minTrackingConfidence: .5 });
 }
 
 async function beginGestureCalibration() {

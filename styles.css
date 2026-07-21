@@ -61,6 +61,8 @@ h2 { font-size: clamp(40px, 4vw, 62px); line-height: .96; }
 #field { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
 .orb-button { width: clamp(125px, 16vw, 178px); aspect-ratio: 1; position: relative; border: 0; border-radius: 50%; background: transparent; display: grid; place-items: center; color: var(--ink); transition: transform .3s ease; z-index: 1; }
 .orb-button:hover { transform: scale(1.04); }
+.is-grabbing-orb .orb-button { transform: scale(1.08); filter: drop-shadow(0 0 18px rgba(196, 215, 162, .58)); }
+.orb-button.orb-key-shift .orb-core { animation: orb-key-shift .42s cubic-bezier(.2, .85, .25, 1); }
 .orb-core { width: 68%; height: 68%; display: block; border-radius: 50%; background: radial-gradient(circle at 36% 30%, #fff3bd 0, var(--warm) 20%, #aa593c 51%, #43305f 78%, transparent 80%); box-shadow: 0 0 35px rgba(255, 179, 87, .36), inset -13px -10px 22px rgba(30, 11, 42, .34); transition: filter .3s ease; }
 .orb-button.active .orb-core { filter: brightness(1.15) saturate(1.1); animation: breathe 4s ease-in-out infinite; }
 .is-listening .orb-core { background: radial-gradient(circle at 36% 30%, #ffd9ba 0, #d99a68 19%, #aa596d 46%, #546d58 72%, transparent 81%); box-shadow: 0 0 52px rgba(220, 132, 153, .43), inset -13px -10px 22px rgba(27, 50, 35, .38); }
@@ -131,6 +133,7 @@ dialog p { color: #c6c0ca; line-height: 1.65; }
 
 @keyframes turn { to { rotate: 360deg; } }
 @keyframes breathe { 50% { transform: scale(1.06); filter: brightness(1.25) saturate(1.18); } }
+@keyframes orb-key-shift { 50% { transform: scale(1.2) rotate(12deg); filter: brightness(1.35) saturate(1.25); } }
 @keyframes listen-breathe { 50% { transform: scale(1.09); filter: brightness(1.23) saturate(1.34); } }
 @keyframes listen-bloom { 50% { transform: scale(1.12); opacity: .18; } }
 

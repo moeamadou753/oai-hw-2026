@@ -74,6 +74,7 @@ const state = {
   gestureCommandAwaitReset: false, gestureCommandResetPose: null, gestureCommandResetSince: 0,
   gestureCommandMissingSince: 0,
   earGestureStartedAt: 0, earGestureCooldownUntil: 0,
+  orbGrabActive: false, orbGrabAngle: 0, orbGrabAccumulatedAngle: 0, orbGrabLastStepAt: 0, orbGrabEnteredAt: 0,
   currentHandLabel: null, activeCueHandLabel: null, activeCueHandPosition: null,
   cueTemplates: gestureTest.enabled ? [] : JSON.parse(localStorage.getItem('tonal-field-cue-motion') || '[]'),
   gestureCalibration: gestureTest.enabled ? null : JSON.parse(localStorage.getItem('tonal-field-cue') || 'null'),
@@ -403,6 +404,7 @@ function exitCamera() {
   state.faceTrackingBusy = false;
   state.lastFaceTrackingAt = 0;
   resetEarGesture();
+  resetOrbGrab();
   state.gestureAwaitRelease = false;
   state.activeCueHandLabel = null;
   state.activeCueHandPosition = null;
@@ -448,9 +450,13 @@ function handPose(landmarks) {
   const a = { x: landmarks[5].x - landmarks[0].x, y: landmarks[5].y - landmarks[0].y, z: landmarks[5].z - landmarks[0].z };
   const b = { x: landmarks[17].x - landmarks[0].x, y: landmarks[17].y - landmarks[0].y, z: landmarks[17].z - landmarks[0].z };
   const normal = normalize({ x: a.y * b.z - a.z * b.y, y: a.z * b.x - a.x * b.z, z: a.x * b.y - a.y * b.x });
+  // Use screen-space coordinates for rotation: the camera is mirrored in the
+  // interface, so a positive angle is visually clockwise to the musician.
+  const knuckleAngle = Math.atan2(landmarks[17].y - landmarks[5].y, landmarks[5].x - landmarks[17].x);
   return {
     center, fingerCenter, width, spread, ratios, normal,
-    indexTip: landmarks[8], indexPip: landmarks[6]
+    indexTip: landmarks[8], indexPip: landmarks[6], thumbTip: landmarks[4],
+    knuckleAngle
   };
 }
 
@@ -499,6 +505,8 @@ function blendPose(from, to, amount) {
     fingerCenter: blendPoint(from.fingerCenter, to.fingerCenter),
     indexTip: blendPoint(from.indexTip, to.indexTip),
     indexPip: blendPoint(from.indexPip, to.indexPip),
+    thumbTip: blendPoint(from.thumbTip, to.thumbTip),
+    knuckleAngle: from.knuckleAngle + Math.atan2(Math.sin(to.knuckleAngle - from.knuckleAngle), Math.cos(to.knuckleAngle - from.knuckleAngle)) * amount,
     width: from.width + (to.width - from.width) * amount,
     spread: from.spread + (to.spread - from.spread) * amount,
     ratios: from.ratios.map((ratio, index) => ratio + (to.ratios[index] - ratio) * amount),
@@ -629,6 +637,86 @@ function evaluateEarListeningGesture(pose) {
     updateGestureState(state.isListening ? 'listening enabled' : wasListening ? 'listening paused' : 'microphone permission needed');
     updateControls();
   });
+  return true;
+}
+
+const circleOfFifths = [0, 7, 2, 9, 4, 11, 6, 1, 8, 3, 10, 5];
+
+function resetOrbGrab() {
+  state.orbGrabActive = false;
+  state.orbGrabAccumulatedAngle = 0;
+  state.orbGrabEnteredAt = 0;
+  document.body.classList.remove('is-grabbing-orb');
+}
+
+function orbScreenCenter() {
+  const bounds = el.orb.getBoundingClientRect();
+  return { x: bounds.left + bounds.width / 2, y: bounds.top + bounds.height / 2, radius: Math.max(178, bounds.width * 1.52) };
+}
+
+function orbPointerPosition(pose) {
+  return { x: (1 - pose.indexTip.x) * window.innerWidth, y: pose.indexTip.y * window.innerHeight };
+}
+
+function isInsideOrbField(pose) {
+  const orb = orbScreenCenter();
+  const pointer = orbPointerPosition(pose);
+  return Math.hypot(pointer.x - orb.x, pointer.y - orb.y) < orb.radius;
+}
+
+function isOrbPointer(pose) {
+  // Let the index lead. Other fingers may be open or curled, which makes this
+  // work for the loose, looping spiral in the reference movement.
+  return Boolean(pose.indexTip) && pose.ratios[0] > 1.08;
+}
+
+function shiftKeyByFifths(direction) {
+  const currentIndex = circleOfFifths.indexOf(state.key);
+  const nextIndex = cleanModulo(currentIndex + direction, circleOfFifths.length);
+  state.key = circleOfFifths[nextIndex];
+  el.key.value = String(state.key);
+  updateDrone();
+  updateControls();
+  el.orb.classList.remove('orb-key-shift');
+  requestAnimationFrame(() => el.orb.classList.add('orb-key-shift'));
+}
+
+function evaluateOrbGrab(pose) {
+  const now = gestureNow();
+  const canGrabOrb = state.isCueMode && !state.isCalibrating && !state.cueRecording
+    && state.cuePhase === 'ready';
+  const grabbing = canGrabOrb && isInsideOrbField(pose) && isOrbPointer(pose);
+  if (!grabbing) {
+    if (state.orbGrabActive) updateGestureState('orb released · key set');
+    resetOrbGrab();
+    return false;
+  }
+  if (!state.orbGrabActive) {
+    const orb = orbScreenCenter();
+    const pointer = orbPointerPosition(pose);
+    state.orbGrabActive = true;
+    state.orbGrabAngle = Math.atan2(pointer.y - orb.y, pointer.x - orb.x);
+    state.orbGrabAccumulatedAngle = 0;
+    state.orbGrabLastStepAt = now;
+    state.orbGrabEnteredAt = now;
+    document.body.classList.add('is-grabbing-orb');
+    updateGestureState('orb field · trace around it');
+    return true;
+  }
+  const orb = orbScreenCenter();
+  const pointer = orbPointerPosition(pose);
+  const angle = Math.atan2(pointer.y - orb.y, pointer.x - orb.x);
+  const delta = Math.atan2(Math.sin(angle - state.orbGrabAngle), Math.cos(angle - state.orbGrabAngle));
+  state.orbGrabAngle = angle;
+  state.orbGrabAccumulatedAngle += delta;
+  const stepAngle = Math.PI * .42; // roughly 76°: an easy, musical arc per fifth
+  if (Math.abs(state.orbGrabAccumulatedAngle) >= stepAngle && now - state.orbGrabLastStepAt > 160) {
+    const direction = state.orbGrabAccumulatedAngle > 0 ? 1 : -1;
+    shiftKeyByFifths(direction);
+    state.orbGrabAccumulatedAngle -= direction * stepAngle;
+    state.orbGrabLastStepAt = now;
+    updateGestureState(`${noteNames[state.key]} · ${direction > 0 ? 'clockwise' : 'counterclockwise'} through fifths`);
+  }
   return true;
 }
 
@@ -1448,6 +1536,7 @@ function onHandResults(results) {
   const landmarks = activeIndex >= 0 ? allHands[activeIndex] : null;
   if (!landmarks) {
     resetEarGesture();
+    resetOrbGrab();
     let recordingInterrupted = false;
     if (state.cueRecording) {
       if (state.cueRecording.phase === 'waiting' || state.cueRecording.phase === 'interlude') {
@@ -1505,6 +1594,7 @@ function onHandResults(results) {
     return;
   }
   const isFist = isClosedFist(pose) && (state.isCalibrating || matchesCalibration(pose));
+  if (evaluateOrbGrab(pose)) return;
   if (evaluateEarListeningGesture(pose)) return;
   if (state.isDrone) {
     if (evaluateGestureCommandReset(pose)) {

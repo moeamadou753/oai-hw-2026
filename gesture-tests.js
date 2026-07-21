@@ -142,7 +142,7 @@ function finishFixture(reason = 'ended') {
 window.addEventListener('message', event => {
   if (!activeRun || event.origin !== window.location.origin || event.source !== el.frame.contentWindow) return;
   const message = event.data;
-  if (!message || message.source !== 'tonal-field-gesture-test' || message.runId !== activeRun.runId) return;
+  if (!message || message.source !== 'mimetry-gesture-test' || message.runId !== activeRun.runId) return;
   if (message.kind === 'fixture-started') {
     logEvent(`video started · ${Number(message.duration).toFixed(2)}s`);
     return;

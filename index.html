@@ -4,8 +4,8 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#080b16" />
-    <title>Tonal Field</title>
-    <link rel="stylesheet" href="styles.css?v=gesture-harness-v44" />
+    <title>Mimetry</title>
+    <link rel="stylesheet" href="styles.css?v=mimetry-v1" />
   </head>
   <body>
     <video id="camera-feed" class="camera-feed" autoplay muted playsinline aria-hidden="true"></video>
@@ -23,7 +23,7 @@
     </div>
     <main class="app-shell">
       <header class="topbar">
-        <a class="wordmark" href="#top" aria-label="Tonal Field home">tonal field<span>·</span></a>
+        <a class="wordmark" href="#top" aria-label="Mimetry home">Mimetry<span>·</span></a>
         <div class="status" aria-live="polite"><i id="status-dot"></i><span id="status-text">DRONE STANDBY</span></div>
         <div class="topbar-actions">
           <button id="camera-trigger" class="camera-button" type="button">enter camera</button>
@@ -44,7 +44,7 @@
         </div>
 
         <div class="field-wrap">
-          <canvas id="field" width="1000" height="1000" aria-label="Live tonal field visualization"></canvas>
+          <canvas id="field" width="1000" height="1000" aria-label="Live Mimetry visualization"></canvas>
           <div id="fifths-overlay" class="fifths-overlay" aria-hidden="true"></div>
           <div class="target-label" id="target-label">TONIC · C</div>
           <button id="orb-button" class="orb-button" type="button" aria-pressed="false" aria-label="Start the drone">
@@ -70,11 +70,11 @@
         </div>
 
         <section class="controls is-collapsed" id="controls" aria-label="Practice controls">
-          <div class="control-group key-control">
+          <div class="control-group key-control tonic-control">
             <label for="key-select">tonal center</label>
             <select id="key-select" aria-label="Tonal center"></select>
           </div>
-          <div class="control-group">
+          <div class="control-group register-control">
             <label for="octave-select">register</label>
             <select id="octave-select" aria-label="Drone register">
               <option value="2">low</option>
@@ -82,7 +82,7 @@
               <option value="4">high</option>
             </select>
           </div>
-          <div class="control-group">
+          <div class="control-group profile-control">
             <label for="input-profile">listen for</label>
             <select id="input-profile" aria-label="Listening profile">
               <option value="voice" selected>voice</option>
@@ -95,15 +95,15 @@
               <option value="default">system default</option>
             </select>
           </div>
-          <div class="control-group wide-control">
+          <div class="control-group wide-control sensitivity-control">
             <label for="sensitivity">listening sensitivity <output id="sensitivity-output">balanced</output></label>
             <input id="sensitivity" type="range" min="0" max="100" value="56" />
           </div>
-          <div class="control-group wide-control">
+          <div class="control-group wide-control warmth-control">
             <label for="warmth">drone character <output id="warmth-output">warm</output></label>
             <input id="warmth" type="range" min="0" max="100" value="54" />
           </div>
-          <div class="control-group wide-control">
+          <div class="control-group wide-control volume-control">
             <label for="volume">drone level <output id="volume-output">48%</output></label>
             <input id="volume" type="range" min="0" max="100" value="48" />
           </div>
@@ -119,12 +119,12 @@
       <button id="about-close" class="dialog-close" type="button" aria-label="Close">×</button>
       <p class="eyebrow">Why this exists</p>
       <h2>More than correct.</h2>
-      <p>Tonal Field makes the pull, tension, and return inside music visible. It is a practice instrument for developing an ear that recognizes relationships in context.</p>
+      <p>Mimetry makes the pull, tension, and return inside music visible. It is a practice instrument for developing an ear that recognizes relationships in context.</p>
       <p class="dialog-note">This V1 uses your microphone locally in the browser. No audio is recorded or uploaded.</p>
     </dialog>
 
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js"></script>
-    <script src="app.js?v=gesture-harness-v44"></script>
+    <script src="app.js?v=mimetry-v1"></script>
   </body>
 </html>

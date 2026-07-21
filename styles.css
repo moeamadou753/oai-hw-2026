@@ -94,18 +94,21 @@ h2 { font-size: clamp(40px, 4vw, 62px); line-height: .96; }
 .lesson-meter { height: 2px; margin-top: 20px; background: rgba(255,255,255,.1); }
 .lesson-meter span { display: block; width: 8%; height: 100%; background: var(--warm); transition: width .6s ease; }
 
-.controls { position: absolute; z-index: 5; top: 22px; right: clamp(20px, 8vw, 130px); width: min(850px, calc(100% - 40px)); min-height: 88px; padding: 17px 20px; border: 1px solid rgba(246, 241, 231, .14); border-radius: 4px; background: linear-gradient(100deg, rgba(20, 23, 30, .92), rgba(29, 26, 36, .82)); box-shadow: 0 18px 55px rgba(0, 0, 0, .28); backdrop-filter: blur(18px); display: grid; grid-template-columns: 96px 78px 80px 1fr 1fr 1fr auto; gap: 15px; align-items: end; transform-origin: top right; transition: opacity .2s ease, transform .25s ease; }
+.controls { position: absolute; z-index: 5; top: 22px; right: clamp(20px, 8vw, 130px); box-sizing: border-box; width: min(1120px, calc(100% - 48px)); min-width: 0; padding: 20px 22px 18px; border: 1px solid rgba(246, 241, 231, .14); border-radius: 4px; background: linear-gradient(100deg, rgba(20, 23, 30, .92), rgba(29, 26, 36, .82)); box-shadow: 0 18px 55px rgba(0, 0, 0, .28); backdrop-filter: blur(18px); display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 20px 18px; align-items: end; transform-origin: top right; transition: opacity .2s ease, transform .25s ease; }
 .controls.is-collapsed { opacity: 0; pointer-events: none; transform: translateY(-10px) scale(.98); }
 .control-group { min-width: 0; }
-.mic-source { grid-column: span 2; min-width: 180px; }
-.control-group label { display: flex; justify-content: space-between; margin-bottom: 10px; color: var(--muted); font-size: 10px; letter-spacing: .12em; text-transform: uppercase; }
-output { color: #cac4ce; letter-spacing: .04em; }
+.tonic-control, .register-control, .profile-control { grid-column: span 2; }
+.mic-source { grid-column: span 6; min-width: 0; }
+.sensitivity-control, .warmth-control, .volume-control { grid-column: span 4; }
+.control-group label { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; min-width: 0; margin-bottom: 10px; color: var(--muted); font-size: 10px; letter-spacing: .12em; line-height: 1.25; text-transform: uppercase; }
+output { flex: 0 0 auto; color: #cac4ce; letter-spacing: .04em; white-space: nowrap; }
 select { width: 100%; appearance: none; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; padding: 6px 22px 9px 0; color: var(--ink); background: transparent url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8'%3E%3Cpath d='M1 1l5 5 5-5' fill='none' stroke='%23c9c3d0'/%3E%3C/svg%3E") right 8px center / 12px no-repeat; }
 select option { background: #171725; }
 input[type="range"] { width: 100%; margin: 8px 0 5px; accent-color: var(--warm); }
-.mic-button { align-self: end; min-width: 148px; border: 1px solid rgba(255,190,92,.56); border-radius: 100px; padding: 11px 16px; color: var(--warm); background: rgba(255,190,92,.04); font-size: 12px; transition: background .2s, color .2s; }
+.mic-button { grid-column: 1 / span 3; align-self: end; min-width: 0; width: 100%; border: 1px solid rgba(255,190,92,.56); border-radius: 100px; padding: 11px 16px; color: var(--warm); background: rgba(255,190,92,.04); font-size: 12px; transition: background .2s, color .2s; }
 .mic-button.active, .mic-button:hover { background: var(--warm); color: #1b1520; }
-.gesture-button { grid-column: 1 / -1; justify-self: start; border: 0; padding: 1px 0 0; color: var(--muted); background: transparent; font-size: 10px; letter-spacing: .11em; text-transform: uppercase; }
+.gesture-button { grid-column: span 3; min-width: 0; justify-self: start; border: 0; padding: 3px 0; color: var(--muted); background: transparent; font-size: 10px; letter-spacing: .11em; text-align: left; text-transform: uppercase; }
+#record-cue-motion { grid-column: span 4; }
 .gesture-button:hover { color: var(--warm); }
 .practice-note { display: none; }
 .practice-note p { max-width: 640px; margin: 0; }
@@ -153,10 +156,10 @@ dialog p { color: #c6c0ca; line-height: 1.65; }
   .descriptor-list { justify-content: center; }
   .lesson-card { justify-self: center; margin-top: 20px; margin-bottom: 0; text-align: left; }
   .controls { top: 18px; right: 20px; left: 20px; width: auto; grid-template-columns: 1fr 1fr; gap: 18px; }
-  .wide-control { grid-column: span 1; }
+  .tonic-control, .register-control, .profile-control, .wide-control { grid-column: span 1; }
   .mic-source { grid-column: span 2; }
   .mic-button { grid-column: span 2; justify-self: start; }
-  .gesture-button { grid-column: span 2; }
+  .gesture-button, #record-cue-motion { grid-column: span 2; }
   .practice-note { display: block; padding: 0 20px 16px; color: var(--muted); font-size: 10px; line-height: 1.4; }
   body.camera-active .experience { padding: 60px 20px 28px; }
   body.camera-active .field-wrap { width: min(94vw, 560px); max-height: 62vh; transform: translateX(-8vw); }
@@ -176,8 +179,8 @@ dialog p { color: #c6c0ca; line-height: 1.65; }
   .pitch-readout { bottom: 6%; }
   .pitch-detail { bottom: 1%; }
   .controls { grid-template-columns: 1fr; max-height: calc(100vh - 110px); overflow-y: auto; }
-  .wide-control, .mic-source, .mic-button { grid-column: auto; }
-  .gesture-button { grid-column: auto; }
+  .tonic-control, .register-control, .profile-control, .wide-control, .mic-source, .mic-button { grid-column: auto; }
+  .gesture-button, #record-cue-motion { grid-column: auto; }
   .mic-button { width: 100%; }
   .camera-button { padding: 7px 10px; font-size: 10px; }
   .topbar-actions { gap: 12px; }

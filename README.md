@@ -1,8 +1,8 @@
 # oai-hw-2026
 
-## Tonal Field — V1
+## Mimetry — V1
 
-Tonal Field is a browser-based practice instrument for ear training in context. It sustains a living tonal drone, listens for one sung or played note at a time, and visualizes the relationship between that note and the tonal center. Learners can save the descriptors that feel true to them, building a personal vocabulary for musical tension and resolution.
+Mimetry is a browser-based practice instrument for ear training in context. It sustains a living tonal drone, listens for one sung or played note at a time, and visualizes the relationship between that note and the tonal center. Learners can save the descriptors that feel true to them, building a personal vocabulary for musical tension and resolution.
 
 ### Run locally
 
@@ -18,7 +18,7 @@ Open [http://localhost:4173](http://localhost:4173). Click **hold home** to star
 
 - Additive, gently modulated drone synthesis with adjustable tonal center, register, character, and level.
 - Local, real-time monophonic microphone pitch tracking.
-- A tonal-field visual that distinguishes stable intervals from tension.
+- A Mimetry visual that distinguishes stable intervals from tension.
 - A personal, persistent descriptor stream: select words that match how an interval lands for you.
 - An optional mirrored camera practice view with a three-second fist hold for Cue Mode. Record three examples of your own conducting cue; their normalized hand trajectories stay in local browser storage and can re-articulate the drone.
 

@@ -55,7 +55,7 @@ noteNames.forEach((name, index) => {
 const state = {
   audio: null, droneGain: null, droneNodes: [], lfoNodes: [], isDrone: false,
   analyser: null, micStream: null, micSource: null,
-  microphoneId: localStorage.getItem('tonal-field-microphone') || 'default',
+  microphoneId: localStorage.getItem('mimetry-microphone') || localStorage.getItem('tonal-field-microphone') || 'default',
   cameraStream: null, hands: null, faceMesh: null, faceLandmarks: null, handLoopRunning: false,
   faceTrackingBusy: false, lastFaceTrackingAt: 0,
   isListening: false, isCamera: false, isCueMode: false, isCalibrating: false,
@@ -77,9 +77,9 @@ const state = {
   earGestureStartedAt: 0, earGestureCooldownUntil: 0,
   orbGrabActive: false, orbGrabAngle: 0, orbGrabAccumulatedAngle: 0, orbGrabLastStepAt: 0, orbGrabEnteredAt: 0, orbGrabHasMoved: false,
   currentHandLabel: null, activeCueHandLabel: null, activeCueHandPosition: null,
-  cueTemplates: gestureTest.enabled ? [] : JSON.parse(localStorage.getItem('tonal-field-cue-motion') || '[]'),
-  gestureCalibration: gestureTest.enabled ? null : JSON.parse(localStorage.getItem('tonal-field-cue') || 'null'),
-  selectedDescriptors: new Set(JSON.parse(localStorage.getItem('tonal-field-descriptors') || '[]'))
+  cueTemplates: gestureTest.enabled ? [] : JSON.parse(localStorage.getItem('mimetry-cue-motion') || localStorage.getItem('tonal-field-cue-motion') || '[]'),
+  gestureCalibration: gestureTest.enabled ? null : JSON.parse(localStorage.getItem('mimetry-cue') || localStorage.getItem('tonal-field-cue') || 'null'),
+  selectedDescriptors: new Set(JSON.parse(localStorage.getItem('mimetry-descriptors') || localStorage.getItem('tonal-field-descriptors') || '[]'))
 };
 const ctx = el.canvas.getContext('2d');
 const gestureCtx = el.gestureCanvas.getContext('2d');
@@ -92,12 +92,12 @@ const gestureCommandEvents = new Set(['start', 'raise', 'lower', 'stop']);
 
 function reportGestureTest(kind, detail = {}) {
   if (!gestureTest.enabled || window.parent === window) return;
-  window.parent.postMessage({ source: 'tonal-field-gesture-test', runId: gestureTest.runId, kind, ...detail }, window.location.origin);
+  window.parent.postMessage({ source: 'mimetry-gesture-test', runId: gestureTest.runId, kind, ...detail }, window.location.origin);
 }
 
 function emitGestureEvent(type, detail = {}) {
   const event = { type, at: gestureNow(), ...detail };
-  window.dispatchEvent(new CustomEvent('tonal-field-gesture', { detail: event }));
+  window.dispatchEvent(new CustomEvent('mimetry-gesture', { detail: event }));
   if (gestureCommandEvents.has(type)) reportGestureTest('gesture-event', { event });
 }
 
@@ -260,7 +260,7 @@ async function startListening() {
 
 async function selectMicrophone() {
   state.microphoneId = el.microphone.value;
-  localStorage.setItem('tonal-field-microphone', state.microphoneId);
+  localStorage.setItem('mimetry-microphone', state.microphoneId);
   if (!state.isListening) {
     el.pitchDetail.textContent = state.microphoneId === 'default' ? 'system microphone selected' : 'microphone selected · enable listening';
     return;
@@ -338,7 +338,7 @@ async function enterCamera() {
     setControlsCollapsed(true);
     startHandTracking();
   } catch (error) {
-    el.lessonText.textContent = 'Camera access was not available. You can keep practicing in the tonal field.';
+    el.lessonText.textContent = 'Camera access was not available. You can keep practicing in Mimetry.';
     el.pitchDetail.textContent = 'camera permission needed';
   }
 }
@@ -1285,7 +1285,7 @@ function saveCueTemplate(points) {
   const template = makeCueTemplate(points);
   if (!template) return false;
   state.cueTemplates.push(template);
-  localStorage.setItem('tonal-field-cue-motion', JSON.stringify(state.cueTemplates));
+  localStorage.setItem('mimetry-cue-motion', JSON.stringify(state.cueTemplates));
   updateCueRecordButton();
   return true;
 }
@@ -1302,7 +1302,7 @@ async function beginCueMotionRecording({ restart = false } = {}) {
   }
   if (restart || state.cueTemplates.length >= 3) {
     state.cueTemplates = [];
-    localStorage.removeItem('tonal-field-cue-motion');
+    localStorage.removeItem('mimetry-cue-motion');
     updateCueRecordButton();
   }
   state.cueRecording = { phase: 'waiting', startedAt: null, points: [] };
@@ -1459,7 +1459,7 @@ function resetGestureHold() {
 
 function saveCalibration(pose) {
   state.gestureCalibration = { ratios: pose.ratios, normal: pose.normal };
-  localStorage.setItem('tonal-field-cue', JSON.stringify(state.gestureCalibration));
+  localStorage.setItem('mimetry-cue', JSON.stringify(state.gestureCalibration));
   state.isCalibrating = false;
   state.gestureAwaitRelease = true;
   state.cueRecording = null;
@@ -1751,7 +1751,7 @@ function updateDescriptors(interval) {
     if (state.selectedDescriptors.has(word)) button.classList.add('selected');
     button.addEventListener('click', () => {
       if (state.selectedDescriptors.has(word)) state.selectedDescriptors.delete(word); else state.selectedDescriptors.add(word);
-      localStorage.setItem('tonal-field-descriptors', JSON.stringify([...state.selectedDescriptors]));
+      localStorage.setItem('mimetry-descriptors', JSON.stringify([...state.selectedDescriptors]));
       button.classList.toggle('selected'); button.setAttribute('aria-pressed', state.selectedDescriptors.has(word));
     });
     el.descriptors.append(button);
